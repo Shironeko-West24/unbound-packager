@@ -3,7 +3,7 @@ import re
 import shutil
 import subprocess
 
-from ubp import containers
+from ubp import containers, signing
 from ubp.util import UbpError, log
 
 TOOL = "/usr/local/sbin/unbound-update"
@@ -48,19 +48,35 @@ def config_text(port, checks, local=""):
     )
 
 
-def stage_release(work, os_name, tag):
+def stage_release(work, os_name, tag, key_file):
     source = os.path.join(str(work), "release")
     target = os.path.join(str(work), "servertest", os_name, "release")
     shutil.rmtree(target, ignore_errors=True)
     for sub in (os.path.join("download", tag), os.path.join("latest", "download")):
         shutil.copytree(source, os.path.join(target, sub))
+        signing.sign(key_file, os.path.join(target, sub, "SHA256SUMS"))
     return target
 
 
+def use_test_key(src, public):
+    path = os.path.join(src, "server", "unbound-update")
+    text = open(path, encoding="utf-8").read()
+    text, count = re.subn(r'(?m)^RELEASE_SIGNING_KEY = ".*"$', f'RELEASE_SIGNING_KEY = "{public}"', text)
+    if count != 1:
+        raise UbpError("unbound-update の署名の公開鍵の行が見つかりません。")
+    open(path, "w", encoding="utf-8").write(text)
+
+
 def run(code, work, os_name, tag, checks):
-    staged = stage_release(work, os_name, tag)
+    keys = os.path.join(str(work), "servertest", os_name, "key")
+    shutil.rmtree(keys, ignore_errors=True)
+    os.makedirs(keys)
+    key_file, public = signing.generate(keys, "unbound-packager servertest")
+    staged = stage_release(work, os_name, tag, key_file)
+    shutil.rmtree(keys, ignore_errors=True)
     src = os.path.join(str(work), "servertest", os_name, "src")
     containers.prepare_source(code, src)
+    use_test_key(src, public)
     name = f"ubp-server-{os_name}"
     containers.start_systemd(code, f"test-{os_name}", name, [(staged, "/release", "ro,Z"), (src, "/ubp", "ro,Z")])
     box = Box(name)
@@ -125,13 +141,19 @@ def exercise(box, os_name, tag, checks):
     box.write(CONF, config_text(8001, local_only, "ubp-test.example"))
     rc, out = box.tool("update", "--force", "--tag", tag)
     box.record("改ざんされたパッケージの拒否", rc != 0 and "SHA-256" in out, out)
+    box.sh("sh", "-c", f"cp -r /release /tmp/nosig && rm -f /tmp/nosig/download/{tag}/SHA256SUMS.sig")
+    subprocess.run(containers.engine() + ["exec", "-d", box.name, "python3", "-m", "http.server", "8002", "--bind", "127.0.0.1", "--directory", "/tmp/nosig"], capture_output=True)
+    box.sh("sleep", "2")
+    box.write(CONF, config_text(8002, local_only, "ubp-test.example"))
+    rc, out = box.tool("update", "--force", "--tag", tag)
+    box.record("署名のないリリースの拒否", rc != 0 and "署名" in out, out)
     box.write(CONF, config_text(8000, local_only, "ubp-test.example"))
     rc, out = box.tool("verify")
     box.record("拒否のあとも動作している", rc == 0, out)
     rc, out = box.tool("rollback")
     box.record("切り戻し先がないときは何もせずに止まる", rc == 2 and "切り戻し先" in out, out)
     rc, out = box.tool("self-update", "--target", "/tmp/unbound-update.new")
-    rc2, _ = box.sh("cmp", "/tmp/unbound-update.new", "/ubp/server/unbound-update")
+    rc2, _ = box.sh("cmp", "/tmp/unbound-update.new", f"/release/download/{tag}/unbound-update")
     box.record("コマンド自体の更新", rc == 0 and rc2 == 0, out)
     rc, out = box.tool("uninstall")
     box.record("解除", rc == 0, out)

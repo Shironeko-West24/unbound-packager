@@ -1,4 +1,4 @@
 FROM docker.io/rockylinux/rockylinux:10
-RUN dnf -y install systemd python3 binutils procps-ng sudo iproute \
+RUN dnf -y install systemd python3 binutils procps-ng sudo openssh-clients iproute \
     && dnf clean all
 CMD ["/sbin/init"]

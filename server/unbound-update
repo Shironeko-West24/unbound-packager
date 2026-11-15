@@ -14,11 +14,16 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
 
 TOOL_VERSION = 1
+RELEASE_SIGNING_KEY = ""
+SIGNER_IDENTITY = "unbound-packager"
+SIGNATURE_NAMESPACE = "unbound-packager-release"
+SIGNATURE_LIMIT = 1 << 16
 ROOT = os.environ.get("UBP_TEST_ROOT", "")
 TEST_DNS = os.environ.get("UBP_TEST_DNS", "")
 ETC_DIR = ROOT + "/etc/unbound-packager"
@@ -99,14 +104,14 @@ def say(message=""):
     print(message, flush=True)
 
 
-def run(cmd, env=None, timeout=1800):
+def run(cmd, env=None, timeout=1800, data=None):
     full_env = dict(os.environ)
     if not ROOT:
         full_env["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
     full_env["LC_ALL"] = "C"
     full_env.update(env or {})
     try:
-        proc = subprocess.run(cmd, capture_output=True, env=full_env, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, env=full_env, timeout=timeout, input=data)
     except FileNotFoundError:
         return 127, "", f"コマンドがありません: {cmd[0]}"
     except subprocess.TimeoutExpired:
@@ -330,8 +335,45 @@ def parse_sums(data):
     return sums
 
 
+def signing_key():
+    key = os.environ.get("UBP_TEST_SIGNING_KEY", "") if ROOT else RELEASE_SIGNING_KEY
+    if not re.match(r"^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [ -~]*)?$", key):
+        raise StepError("verify", "リリースの署名を確かめる公開鍵が設定されていません。")
+    return key
+
+
+def verify_sums_signature(data, signature):
+    key = signing_key()
+    work = tempfile.mkdtemp(prefix="unbound-update-")
+    try:
+        signers = os.path.join(work, "allowed_signers")
+        sig = os.path.join(work, "SHA256SUMS.sig")
+        with open(signers, "w", encoding="utf-8") as handle:
+            handle.write(f'{SIGNER_IDENTITY} namespaces="{SIGNATURE_NAMESPACE}" {key}\n')
+        with open(sig, "wb") as handle:
+            handle.write(signature)
+        rc, out, err = run(
+            ["ssh-keygen", "-Y", "verify", "-f", signers, "-I", SIGNER_IDENTITY, "-n", SIGNATURE_NAMESPACE, "-s", sig],
+            timeout=60, data=data,
+        )
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if rc == 127:
+        raise StepError("verify", "ssh-keygen がないため、リリースの署名を確かめられません。openssh-clients（Rocky Linux）または openssh-client（Ubuntu）を導入してください。")
+    if rc != 0:
+        raise StepError("verify", "SHA256SUMS の署名を確かめられませんでした。何も変更していません。\n" + tail(out, err))
+
+
 def fetch_release_at(base):
-    sums = parse_sums(http_get(f"{base}/SHA256SUMS", 1 << 20))
+    raw_sums = http_get(f"{base}/SHA256SUMS", 1 << 20)
+    try:
+        signature = http_get(f"{base}/SHA256SUMS.sig", SIGNATURE_LIMIT)
+    except StepError as exc:
+        if exc.stage != "download":
+            raise
+        raise StepError("verify", f"リリースに署名（SHA256SUMS.sig）がありません: {base}")
+    verify_sums_signature(raw_sums, signature)
+    sums = parse_sums(raw_sums)
     raw = http_get(f"{base}/manifest.json", 1 << 22)
     if sums.get("manifest.json") != hashlib.sha256(raw).hexdigest():
         raise StepError("verify", "manifest.json の SHA-256 が SHA256SUMS と一致しません。")

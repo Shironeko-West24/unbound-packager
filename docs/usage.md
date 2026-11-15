@@ -6,18 +6,25 @@ DNS サーバーにパッケージを導入し、更新するための手順で�
 
 ## 導入
 
+署名を確かめるため、`ssh-keygen` が必要です。Rocky Linux では openssh-clients、Ubuntu では openssh-client に含まれます（多くの環境では最初から入っています）。
+
 ```
 cd ~
 curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/unbound-update
 curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/SHA256SUMS
+curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/SHA256SUMS.sig
+echo 'unbound-packager namespaces="unbound-packager-release" @RELEASE_SIGNING_PUBLIC_KEY@' > allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I unbound-packager -n unbound-packager-release -s SHA256SUMS.sig < SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 sudo install -m 755 unbound-update /usr/local/sbin/unbound-update
-rm unbound-update SHA256SUMS
+rm unbound-update SHA256SUMS SHA256SUMS.sig allowed_signers
 sudo unbound-update init --repository Shironeko-West24/unbound-packager
 sudoedit /etc/unbound-packager/unbound-update.conf
 ```
 
-- `sha256sum` が `unbound-update: OK` と表示することを確かめてから、導入してください。
+- `ssh-keygen` が `Good "unbound-packager-release" signature for unbound-packager` で始まる行を表示し、`sha256sum` が `unbound-update: OK` と表示することを確かめてから、導入してください。どちらかが失敗したら、導入しないでください。
+- `allowed_signers` に書く公開鍵は、このリポジトリの `packaging/keys/release-signing.pub` と同じものです。`unbound-update` にも同じ鍵が埋め込まれていて、以後の更新では毎回この鍵で署名を確かめます。
+- 取得の途中で新しいリリースが出ると、ファイルの組み合わせが合わず、署名の確認に失敗します。その場合は、最初からやり直してください。
 - `sudo unbound-update` が見つからないと言われた場合は、`sudo /usr/local/sbin/unbound-update` と書いてください。
 - 戻すには `sudo rm -rf /usr/local/sbin/unbound-update /etc/unbound-packager /var/lib/unbound-packager` です。
 
@@ -65,7 +72,7 @@ sudo unbound-update update --version 1.26.2
 
 サーバーの中で行うことは、次のとおりです。
 
-1. リリースの `SHA256SUMS` と `manifest.json` を取得し、パッケージを取得して照合します。合わなければ、何も変えずに止まります。
+1. リリースの `SHA256SUMS` とその署名を取得し、埋め込んだ公開鍵で署名を確かめます。続いて `manifest.json` とパッケージを取得して照合します。署名がない、署名が合わない、または照合が合わない場合は、何も変えずに止まります。
 2. 依存関係を確かめます。Ubuntu で解決できないときは、パッケージの一覧を 1 回更新（`apt-get update`）してから、もう一度確認します。それでも解決できなければ、unbound を止める前に止まります。
 3. 設定を退避し、パッケージを入れ替えます。
 4. `unbound-checkconf`、起動と安定の確認、名前解決の確認を行います。名前解決の確認に失敗したときは、上流との一時的な通信の失敗に備えて、`unbound-control flush_bogus` で検証に失敗した応答のキャッシュを消し、10 秒おきに最大 5 回確認し直します（全体で 1 分ほど）。成功したときは、確認し直した回数を表示します。
@@ -87,9 +94,13 @@ sudo unbound-update update --version 1.26.2
 
 サーバーには、直前の版のパッケージを 1 世代分残しています。
 
-## 照合で確かめられること
+## 署名と照合で確かめられること
 
-`unbound-update` は、リリースの `SHA256SUMS` と各ファイルを照合します。確かめられるのは「このリポジトリのリリースにあるものと同じ」ことまでです。リリースそのものが差し替えられた場合は、検出できません。
+`unbound-update` は、リリースの `SHA256SUMS` の署名を、埋め込んだ公開鍵で確かめてから、`SHA256SUMS` と各ファイルを照合します。`self-update` も同じ手順で確かめます。
+
+- リリースのファイルが、署名のあとで差し替えられた場合は、検出して止まります。
+- 確かめられるのは、このリポジトリの署名鍵で署名されたものと同じことまでです。署名は GitHub Actions の中で行うため、このリポジトリのワークフローを動かせる人は、署名もできます。
+- 最初に導入するときの公開鍵は、このリポジトリから取得します。GitHub 上のリポジトリそのものが書き換えられた場合は、検出できません。
 
 ## 副作用と戻し方
 
@@ -109,6 +120,9 @@ sudo unbound-update update --version 1.26.2
 | 症状 | 原因と対処 |
 | --- | --- |
 | `別の unbound-update が実行中です`（終了コード 75） | 同じサーバーで、もう 1 つ動いています。終わるのを待ちます |
+| `リリースに署名（SHA256SUMS.sig）がありません` | 署名のないリリースです。導入しません。署名を始める前の古いリリースは、`--version` で指定しても使えません |
+| `SHA256SUMS の署名を確かめられませんでした` | 署名が、埋め込んだ公開鍵と合いません。導入しません。時間をおいてやり直し、続くならリリースを確かめてください。署名鍵が替わった場合は、新しい `unbound-update` を「導入」の手順で入れ直します |
+| `ssh-keygen がないため、リリースの署名を確かめられません` | openssh-clients（Rocky Linux）または openssh-client（Ubuntu）を導入します |
 | `SHA-256 が一致しません` | 取得したファイルが `SHA256SUMS` と違います。導入しません。時間をおいてやり直し、続くならリリースを確かめてください |
 | `取得できませんでした` | GitHub へ接続できません。サーバーから `curl -I https://github.com` で確かめます |
 | `まだこの仕組みで導入した版がありません` | 最初は `update` ではなく `migrate` を実行します |

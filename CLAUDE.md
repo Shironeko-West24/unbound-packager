@@ -29,7 +29,7 @@ gh api "repos/{owner}/{repo}/actions/jobs/ジョブID/logs"
 
 - `main` へ直接プッシュしない。変更は必ずプルリクエストで出す。
 - `release` ワークフローを起動しない。リリース、タグ、シークレットを作成・変更・削除しない。
-- ワークフローに外部のアクション（`uses:`）を足さない。`permissions` を広げない。シークレットを渡すステップを増やさない。必要だと考えたら、理由を示して管理者に相談する。
+- ワークフローに外部のアクション（`uses:`）を足さない。例外は、コミットの SHA で固定した `actions/upload-artifact` と `actions/download-artifact` だけ。`permissions` を広げない。シークレットを渡すステップを増やさない。必要だと考えたら、理由を示して管理者に相談する。
 - DNS サーバーやネットワークに関する情報（IP アドレス、ホスト名、ローカルの名前）と、Webhook URL を、リポジトリ、Issue、プルリクエスト、ログに書かない。
 - 作業の記録、やり取りの内容、確かめていないことの一覧など、不特定多数に向けたものではない内容を、リポジトリ、Issue、プルリクエストに書かない。
 - コミットメッセージとプルリクエストに、セッションへのリンクを書かない。共同作者を書くときは `Co-Authored-By: Claude <noreply@anthropic.com>` とし、モデル名を書かない。
@@ -51,4 +51,5 @@ gh api "repos/{owner}/{repo}/actions/jobs/ジョブID/logs"
 - リポジトリの運用：`docs/maintenance.md`
 - 自動で確かめていることと、出典：`docs/verification.md`
 - 出どころとライセンス：`NOTICE.md`
+- 脆弱性の報告先とサポートの範囲：`SECURITY.md`
 - ビルドオプション、サーバー設定、ライセンスの許可リスト、確認に使う名前：`packaging/options.json`
