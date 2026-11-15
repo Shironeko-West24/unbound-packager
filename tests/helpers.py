@@ -1,3 +1,4 @@
+import atexit
 import functools
 import hashlib
 import http.server
@@ -18,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from ubp import release, util
+from ubp import release, signing, util
 
 TOOL = ROOT / "server" / "unbound-update"
 FAKE_NAMES = ["podman", "dnf", "rpm", "apt-get", "dpkg-query", "systemctl", "unbound-checkconf", "unbound-control", "firewall-cmd", "ufw", "gh"]
@@ -28,6 +29,22 @@ FILES = {
     "ubuntu2604": ["unbound_{p}_amd64.deb", "libunbound8_{p}_amd64.deb", "libunbound-dev_{p}_amd64.deb"],
 }
 OS_RELEASE = {"rocky10": 'ID="rocky"\nID_LIKE="rhel centos fedora"\nVERSION_ID="10.1"\n', "ubuntu2604": 'ID=ubuntu\nID_LIKE=debian\nVERSION_ID="26.04"\n'}
+
+
+_SIGNING = {}
+
+
+def signing_key():
+    if not _SIGNING:
+        directory = tempfile.mkdtemp(prefix="ubp-test-key-")
+        atexit.register(shutil.rmtree, directory, True)
+        key_file, public = signing.generate(directory, "unbound-packager test")
+        _SIGNING.update(file=key_file, public=public)
+    return _SIGNING
+
+
+def sign_release(target):
+    return signing.sign(signing_key()["file"], os.path.join(str(target), "SHA256SUMS"))
 
 
 class FakeDns(threading.Thread):
@@ -141,6 +158,7 @@ class Sandbox(unittest.TestCase):
             "UBP_FAKE_DIR": str(self.fake),
             "UBP_TEST_ROOT": str(self.root),
             "UBP_TEST_DNS": f"127.0.0.1:{self.dns.port}",
+            "UBP_TEST_SIGNING_KEY": signing_key()["public"],
         })
         self.write_config()
         util.SECRETS.clear()
@@ -172,6 +190,7 @@ class Sandbox(unittest.TestCase):
         for os_name in ("rocky10", "ubuntu2604"):
             make_out(work, version, revision, os_name)
         target, combined = release.assemble(ROOT, work, version, revision)
+        sign_release(target)
         tag = combined["tag"]
         shutil.copytree(target, self.site / "download" / tag)
         if latest:

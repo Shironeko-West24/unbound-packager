@@ -7,9 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import containers, notify, release, upstream, versions
+from . import containers, notify, release, signing, upstream, versions
 from .github import GitHub, http_transport
-from .util import LOG, UbpError, eprint, log, run
+from .util import LOG, UbpError, add_secret, eprint, log, run
 
 CODE = Path(__file__).resolve().parents[2]
 
@@ -41,7 +41,9 @@ def output(**values):
 
 
 def github():
-    return GitHub(env("GITHUB_REPOSITORY"), http_transport(env("GH_TOKEN")))
+    token = env("GH_TOKEN")
+    add_secret(token)
+    return GitHub(env("GITHUB_REPOSITORY"), http_transport(token))
 
 
 def notifier():
@@ -155,15 +157,20 @@ def load_combined():
         raise UbpError("公開する内容がありません。先に pipeline を実行してください。")
 
 
+def cmd_sign(args):
+    load_combined()
+    key = signing.public_key(CODE)
+    signing.sign_release(str(work_dir() / "release"), env("RELEASE_SIGNING_KEY"), key)
+    log(f"SHA256SUMS に署名し、リポジトリの公開鍵で確かめました（{key.split()[0]}）。")
+    return 0
+
+
 def cmd_publish(args):
     combined = load_combined()
     repository = env("GITHUB_REPOSITORY")
-    gh = github()
+    github()
     tag = release.publish(str(work_dir() / "release"), combined, repository, env("GITHUB_SHA"))
     log(f"公開しました: {tag}")
-    removed = release.prune(gh.release_tags(), options()["keep_releases"], repository)
-    for old in removed:
-        log(f"古いリリースを片付けました: {old}")
     output(tag=tag)
     return 0
 
@@ -228,6 +235,7 @@ COMMANDS = {
     "detect": cmd_detect,
     "latest": cmd_latest,
     "pipeline": cmd_pipeline,
+    "sign": cmd_sign,
     "publish": cmd_publish,
     "notify-new": cmd_notify_new,
     "on-success": cmd_on_success,

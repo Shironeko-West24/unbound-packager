@@ -1,8 +1,6 @@
 name: release
 
 on:
-  schedule:
-    - cron: "17 19 * * *"
   workflow_dispatch:
     inputs:
       version:
@@ -22,16 +20,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    if: github.event_name == 'workflow_dispatch' || vars.SCHEDULE_ENABLED == 'true'
+  detect:
     runs-on: ubuntu-26.04
-    timeout-minutes: 300
+    timeout-minutes: 30
     permissions:
-      contents: write
-      issues: write
-      actions: write
-    env:
-      UBP_ENGINE: "sudo podman"
+      contents: read
+      issues: read
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      revision: ${{ steps.detect.outputs.revision }}
+      needed: ${{ steps.detect.outputs.needed }}
+      attempt: ${{ steps.detect.outputs.attempt }}
+      published: ${{ steps.detect.outputs.published }}
     steps:
       - name: ソースの取得
         run: |
@@ -55,44 +55,145 @@ jobs:
           UBP_VERSION: ${{ steps.detect.outputs.version }}
         run: python3 -I tools/ci.py notify-new
 
+  build:
+    needs: detect
+    if: needs.detect.outputs.needed == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      UBP_ENGINE: "sudo podman"
+    steps:
+      - name: ソースの取得
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
       - name: 自動テスト
-        if: steps.detect.outputs.needed == 'true'
         run: python3 -I tests/run_all.py
 
       - name: ビルドとテスト
-        if: steps.detect.outputs.needed == 'true'
         env:
-          UBP_VERSION: ${{ steps.detect.outputs.version }}
-          UBP_REVISION: ${{ steps.detect.outputs.revision }}
+          UBP_VERSION: ${{ needs.detect.outputs.version }}
+          UBP_REVISION: ${{ needs.detect.outputs.revision }}
         run: python3 -I tools/ci.py pipeline
 
+      - name: 成果物の保存
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release
+          path: ${{ runner.temp }}/ubp/release
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 失敗の記録の保存
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: failure
+          path: ${{ runner.temp }}/ubp/failure.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    needs: [detect, build]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: ソースの取得
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
+      - name: 成果物の取得
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: release
+          path: ${{ runner.temp }}/ubp/release
+
+      - name: 署名
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: python3 -I tools/ci.py sign
+
       - name: 公開
-        if: steps.detect.outputs.needed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -I tools/ci.py publish
 
+  record:
+    needs: [detect, build, publish]
+    if: always() && needs.detect.outputs.needed == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: ソースの取得
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
+      - name: 成果物の取得
+        if: needs.publish.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: release
+          path: ${{ runner.temp }}/ubp/release
+
+      - name: 失敗の記録の取得
+        if: needs.publish.result != 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: failure
+          path: ${{ runner.temp }}/ubp
+
       - name: 成功の記録と通知
-        if: steps.detect.outputs.needed == 'true'
+        if: needs.publish.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python3 -I tools/ci.py on-success
 
       - name: 失敗の記録と通知
-        if: failure() && steps.detect.outputs.needed == 'true'
+        if: needs.publish.result != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          UBP_VERSION: ${{ steps.detect.outputs.version }}
-          UBP_ATTEMPT: ${{ steps.detect.outputs.attempt }}
+          UBP_VERSION: ${{ needs.detect.outputs.version }}
+          UBP_ATTEMPT: ${{ needs.detect.outputs.attempt }}
         run: python3 -I tools/ci.py on-failure
 
+  keepalive:
+    needs: detect
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: ソースの取得
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
       - name: 定期実行の維持
-        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          UBP_VERSION: ${{ steps.detect.outputs.version }}
-          UBP_PUBLISHED: ${{ steps.detect.outputs.published }}
+          UBP_VERSION: ${{ needs.detect.outputs.version }}
+          UBP_PUBLISHED: ${{ needs.detect.outputs.published }}
         run: python3 -I tools/ci.py keepalive

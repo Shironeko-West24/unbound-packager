@@ -13,6 +13,7 @@ from pathlib import Path
 import helpers
 from ubp import ci, licenses, notify, release, upstream, versions
 from ubp.github import BOT, GitHub, ISSUE_PREFIX
+from ubp import util
 from ubp.util import UbpError, redact
 
 
@@ -191,7 +192,7 @@ class ReleaseTest(unittest.TestCase):
             release.assemble(helpers.ROOT, self.tmp, "1.26.2", 1)
         self.assertIn("SHA-256", str(caught.exception))
 
-    def test_notes_and_publish_and_prune(self):
+    def test_notes_and_publish(self):
         for os_name in ("rocky10", "ubuntu2604"):
             helpers.make_out(self.tmp, "1.26.2", 1, os_name)
         target, combined = release.assemble(helpers.ROOT, self.tmp, "1.26.2", 1)
@@ -200,14 +201,62 @@ class ReleaseTest(unittest.TestCase):
             self.assertIn(needed, text)
         self.assertNotIn("drop", text)
         calls = []
+        with self.assertRaises(UbpError) as caught:
+            release.publish(target, combined, "o/r", "abc123", gh=lambda cmd, **kw: calls.append(cmd))
+        self.assertIn("署名", str(caught.exception))
+        self.assertEqual(calls, [])
+        helpers.sign_release(target)
         release.publish(target, combined, "o/r", "abc123", gh=lambda cmd, **kw: calls.append(cmd))
         cmd = calls[0]
         self.assertEqual(cmd[:4], ["gh", "release", "create", "v1.26.2-1"])
         self.assertIn("abc123", cmd)
         self.assertTrue(any(arg.endswith("SHA256SUMS") for arg in cmd))
-        removed = release.prune(["v1.26.2-1", "v1.25.2-1", "v1.26.1-2", "v1.26.1-1", "other"], 2, "o/r", gh=lambda cmd, **kw: calls.append(cmd))
-        self.assertEqual(removed, ["v1.25.2-1", "v1.26.1-1"])
-        self.assertIn("--cleanup-tag", calls[-1])
+        self.assertTrue(any(arg.endswith("SHA256SUMS.sig") for arg in cmd))
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(hasattr(release, "prune"))
+
+
+class SigningTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.target = os.path.join(self.tmp, "release")
+        os.makedirs(self.target)
+        with open(os.path.join(self.target, "SHA256SUMS"), "w") as handle:
+            handle.write("0" * 64 + "  unbound-update\n")
+        key = helpers.signing_key()
+        self.private = open(key["file"], encoding="utf-8").read()
+        self.public = key["public"]
+
+    def test_sign_release_signs_and_checks_with_expected_key(self):
+        from ubp import signing
+
+        path = signing.sign_release(self.target, self.private, self.public)
+        self.assertTrue(signing.verify(self.public, os.path.join(self.target, "SHA256SUMS"), path))
+        self.assertIn(self.private.strip(), util.SECRETS)
+
+    def test_mismatched_or_missing_key_is_refused(self):
+        from ubp import signing
+
+        with tempfile.TemporaryDirectory() as directory:
+            _, other_public = signing.generate(directory, "someone else")
+        with self.assertRaises(UbpError) as caught:
+            signing.sign_release(self.target, self.private, other_public)
+        self.assertIn("公開鍵", str(caught.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.target, "SHA256SUMS.sig")))
+        with self.assertRaises(UbpError) as caught:
+            signing.sign_release(self.target, "", self.public)
+        self.assertIn("RELEASE_SIGNING_KEY", str(caught.exception))
+
+    def test_repository_public_key_is_used_everywhere(self):
+        from ubp import signing
+
+        key = signing.public_key(helpers.ROOT)
+        tool = load_tool()
+        self.assertEqual(tool.RELEASE_SIGNING_KEY, key)
+        self.assertEqual((tool.SIGNER_IDENTITY, tool.SIGNATURE_NAMESPACE), (signing.IDENTITY, signing.NAMESPACE))
+        for document in ("README.md", "docs/usage.md"):
+            self.assertIn(signing.allowed_signers_line(key).strip(), (helpers.ROOT / document).read_text(encoding="utf-8"), document)
 
 
 class NotifyTest(unittest.TestCase):
@@ -219,7 +268,7 @@ class NotifyTest(unittest.TestCase):
         self.assertIn("/x", body)
         _, title, body = notify.failed("1.26.2", "ビルド（rocky10）", "x" * 5000, 1, 3, "https://example/run")
         self.assertIn("1/3", title)
-        self.assertIn("明日", body)
+        self.assertIn("次の実行で、もう一度試します。", body)
         self.assertLess(len(body), 1500)
         self.assertIn("自動の再試行は終わりました", notify.failed("1.26.2", "テスト", "boom", 3, 3, "u")[2])
         self.assertIn("毎月 1 日", notify.heartbeat("1.26.2", "v1.26.2-1")[2])
@@ -304,6 +353,16 @@ class SignatureTest(unittest.TestCase):
         open(bad, "wb").write(b"tampered")
         with self.assertRaises(UbpError):
             upstream.verify_signature(self.key, self.data + ".asc", bad, self.fpr)
+
+    def test_bundled_release_key_is_used_without_network(self):
+        def no_network(url):
+            raise AssertionError(f"取得しようとしました: {url}")
+
+        cache = os.path.join(self.tmp, "bundled-cache")
+        path = upstream.obtain_key(helpers.ROOT, cache, fetcher=no_network)
+        self.assertEqual(path, os.path.join(str(helpers.ROOT), "packaging", "keys", upstream.KEY_NAME))
+        self.assertEqual(upstream.key_fingerprints(path), [upstream.FINGERPRINT])
+        self.assertFalse(os.path.exists(cache))
 
     def test_fetched_key_with_wrong_fingerprint_is_refused(self):
         cache = os.path.join(self.tmp, "cache")

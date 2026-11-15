@@ -84,6 +84,5 @@
     "dnssec_bogus": "",
     "local": []
   },
-  "max_attempts": 3,
-  "keep_releases": 5
+  "max_attempts": 3
 }

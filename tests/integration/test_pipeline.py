@@ -115,14 +115,31 @@ class PipelineTest(unittest.TestCase):
         from ubp import release
 
         release.assemble(helpers.ROOT, self.work, "1.26.2", 1)
+        helpers.sign_release(self.work / "release")
         api = mock.Mock(release_tags=lambda: ["v1.26.2-1", "v1.20.0-1", "v1.21.0-1", "v1.22.0-1", "v1.23.0-1", "v1.24.0-1"])
         with mock.patch.object(ci, "github", lambda: api):
             self.assertEqual(ci.main(["publish"]), 0)
         gh = self.calls("gh")
+        self.assertEqual(len(gh), 1)
         self.assertEqual(gh[0][:3], ["release", "create", "v1.26.2-1"])
         self.assertEqual(gh[0][gh[0].index("--target") + 1], "abc123")
-        self.assertEqual([args[2] for args in gh[1:]], ["v1.20.0-1"])
         self.assertIn("tag=v1.26.2-1", self.output.read_text())
+
+    def test_sign_command_uses_secret_and_repository_key(self):
+        from ubp import release, signing
+
+        for os_name in ("rocky10", "ubuntu2604"):
+            helpers.make_out(self.work, "1.26.2", 1, os_name)
+        release.assemble(helpers.ROOT, self.work, "1.26.2", 1)
+        key = helpers.signing_key()
+        with mock.patch.dict(os.environ, {"RELEASE_SIGNING_KEY": open(key["file"]).read()}), \
+                mock.patch.object(signing, "public_key", lambda code: key["public"]):
+            self.assertEqual(ci.main(["sign"]), 0)
+        signature = self.work / "release" / "SHA256SUMS.sig"
+        self.assertTrue(signing.verify(key["public"], str(self.work / "release" / "SHA256SUMS"), str(signature)))
+        with mock.patch.dict(os.environ, {"RELEASE_SIGNING_KEY": ""}), \
+                mock.patch.object(signing, "public_key", lambda code: key["public"]):
+            self.assertEqual(ci.main(["sign"]), 1)
 
     def test_publish_without_pipeline_result_fails(self):
         self.assertEqual(ci.main(["publish"]), 1)
@@ -188,6 +205,18 @@ class PipelineTest(unittest.TestCase):
                 ci.main(["keepalive"])
         self.assertIn("定期実行は動いています", self.posted[0]["embeds"][0]["title"])
         self.assertEqual(api.enable_workflow.call_count, 2)
+
+    def test_github_token_is_masked_in_logs(self):
+        import contextlib
+        import io
+
+        ci.github()
+        buffer = io.StringIO()
+        util.LOG.echo = True
+        with contextlib.redirect_stdout(buffer):
+            util.log("Authorization: Bearer TOKEN-VALUE")
+        self.assertNotIn("TOKEN-VALUE", buffer.getvalue())
+        self.assertIn("［秘密］", buffer.getvalue())
 
     def test_secrets_are_not_printed(self):
         import contextlib

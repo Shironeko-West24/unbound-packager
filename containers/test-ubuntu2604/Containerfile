@@ -2,6 +2,6 @@ FROM docker.io/library/ubuntu:26.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ -e /usr/sbin/policy-rc.d ]; then echo "policy-rc.d を外します:"; cat /usr/sbin/policy-rc.d; rm -f /usr/sbin/policy-rc.d; else echo "policy-rc.d はありません"; fi \
     && apt-get update \
-    && apt-get -y install --no-install-recommends systemd systemd-sysv python3 binutils procps sudo iproute2 unattended-upgrades ca-certificates \
+    && apt-get -y install --no-install-recommends systemd systemd-sysv python3 binutils procps sudo openssh-client iproute2 unattended-upgrades ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 CMD ["/sbin/init"]

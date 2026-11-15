@@ -66,7 +66,7 @@ def released(version, tag, summary, unpackaged, release_url):
 
 def failed(version, stage, detail, attempt, max_attempts, run_url):
     remaining = max_attempts - attempt
-    tail = "明日もう一度自動で試します。" if remaining > 0 else "自動の再試行は終わりました。原因を調べてください。"
+    tail = "次の実行で、もう一度試します。" if remaining > 0 else "自動の再試行は終わりました。原因を調べてください。"
     return (
         "error",
         f"Unbound {version} の{stage}に失敗しました（{attempt}/{max_attempts} 回目）",

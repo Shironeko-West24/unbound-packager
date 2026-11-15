@@ -13,9 +13,12 @@ class WorkflowTest(unittest.TestCase):
     def text(self, name):
         return (WORKFLOWS / name).read_text(encoding="utf-8")
 
-    def test_no_third_party_actions(self):
+    def test_only_pinned_official_artifact_actions(self):
+        allowed = re.compile(r"^actions/(upload|download)-artifact@[0-9a-f]{40}$")
         for path in WORKFLOWS.glob("*.yml"):
-            self.assertIsNone(re.search(r"(?m)^\s*-?\s*uses:", path.read_text()), path.name)
+            for action in re.findall(r"(?m)^\s*-?\s*uses:\s*(\S+)\s*$", path.read_text()):
+                self.assertRegex(action, allowed, path.name)
+        self.assertIsNone(re.search(r"(?m)^\s*-?\s*uses:", self.text("ci.yml")))
 
     def test_no_dangerous_triggers(self):
         for path in WORKFLOWS.glob("*.yml"):
@@ -34,15 +37,37 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn(": write", text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
 
-    def test_release_runs_only_on_schedule_or_manual(self):
+    def test_release_runs_only_when_started_by_hand(self):
         text = self.text("release.yml")
         head = text.split("permissions:")[0]
-        self.assertIn("schedule:", head)
         self.assertIn("workflow_dispatch:", head)
+        self.assertNotIn("schedule:", text)
         self.assertNotIn("pull_request", text)
         self.assertNotIn("push:", text)
-        self.assertIn('cron: "17 19 * * *"', text)
-        self.assertIn("if: github.event_name == 'workflow_dispatch' || vars.SCHEDULE_ENABLED == 'true'", text)
+        self.assertNotIn("SCHEDULE_ENABLED", text)
+
+    def jobs(self, name):
+        body = self.text(name).split("\njobs:\n", 1)[1]
+        parts = re.split(r"(?m)^  ([a-z-]+):\n", body)
+        return dict(zip(parts[1::2], parts[2::2]))
+
+    def test_release_jobs_have_only_the_permissions_they_need(self):
+        jobs = self.jobs("release.yml")
+        expected = {
+            "detect": {"contents": "read", "issues": "read"},
+            "build": {"contents": "read"},
+            "publish": {"contents": "write"},
+            "record": {"contents": "read", "issues": "write"},
+            "keepalive": {"actions": "write"},
+        }
+        self.assertEqual(set(jobs), set(expected))
+        for name, body in jobs.items():
+            block = re.search(r"(?m)^    permissions:\n((?:      .*\n)+)", body)
+            self.assertIsNotNone(block, name)
+            found = dict(re.findall(r"(?m)^      ([a-z-]+): ([a-z]+)$", block.group(1)))
+            self.assertEqual(found, expected[name], name)
+        self.assertNotIn("secrets.", jobs["build"])
+        self.assertNotIn("github.token", jobs["build"])
 
     def test_expressions_never_appear_inside_run_scripts(self):
         for path in WORKFLOWS.glob("*.yml"):
@@ -88,6 +113,9 @@ class WorkflowTest(unittest.TestCase):
         steps = text.split("      - name: ")[1:]
         with_secret = [step.splitlines()[0] for step in steps if "secrets.DISCORD_WEBHOOK_URL" in step]
         self.assertEqual(with_secret, ["検知の通知", "成功の記録と通知", "失敗の記録と通知", "定期実行の維持"])
+        with_key = [step.splitlines()[0] for step in steps if "secrets.RELEASE_SIGNING_KEY" in step]
+        self.assertEqual(with_key, ["署名"])
+        self.assertEqual(re.findall(r"secrets\.([A-Z_]+)", text), ["DISCORD_WEBHOOK_URL", "RELEASE_SIGNING_KEY", "DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"])
         build = [step for step in steps if step.startswith("ビルドとテスト")][0]
         self.assertNotIn("GH_TOKEN", build)
         self.assertNotIn("secrets.", build)
@@ -161,14 +189,17 @@ class HygieneTest(unittest.TestCase):
         self.assertEqual(settings["attribution"], {"commit": "Co-Authored-By: Claude <noreply@anthropic.com>", "pr": "", "sessionUrl": False})
 
     def test_required_documents_exist(self):
-        for name in ("README.md", "LICENSE", "NOTICE.md", "CLAUDE.md", "docs/usage.md", "docs/maintenance.md", "docs/verification.md"):
+        for name in ("README.md", "LICENSE", "NOTICE.md", "SECURITY.md", "CLAUDE.md", "docs/usage.md", "docs/maintenance.md", "docs/verification.md"):
             self.assertTrue((helpers.ROOT / name).is_file(), name)
         self.assertIn("MIT License", (helpers.ROOT / "LICENSE").read_text())
         readme = (helpers.ROOT / "README.md").read_text()
         self.assertFalse((helpers.ROOT / "owner").exists())
         self.assertLess(len(readme.splitlines()), 90)
-        for needed in ("非公式", "docs/usage.md", "NOTICE.md"):
+        for needed in ("非公式", "docs/usage.md", "NOTICE.md", "SECURITY.md"):
             self.assertIn(needed, readme)
+        security = (helpers.ROOT / "SECURITY.md").read_text()
+        for needed in ("非公式", "https://nlnetlabs.nl/security-report/", "Report a vulnerability", "Rocky Linux 10", "Ubuntu 26.04"):
+            self.assertIn(needed, security)
         notice = (helpers.ROOT / "NOTICE.md").read_text()
         for needed in ("NLnet Labs", "BSD", "GPL-3", "MIT", "非公式"):
             self.assertIn(needed, notice)

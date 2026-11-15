@@ -126,6 +126,45 @@ class UpdateTest(helpers.Sandbox):
         self.assertEqual(self.calls("dnf"), [])
         self.assertEqual(self.calls("systemctl"), [])
 
+    def test_unsigned_release_is_refused_before_any_change(self):
+        self.seed()
+        (self.site / "latest" / "download" / "SHA256SUMS.sig").unlink()
+        rc, out = self.tool("update")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("署名（SHA256SUMS.sig）がありません", out)
+        self.assertEqual(self.calls("dnf"), [])
+        self.assertEqual(self.installed(), self.pkg("1.26.1"))
+
+    def test_tampered_sums_are_refused_even_with_signature(self):
+        self.seed()
+        sums = self.site / "latest" / "download" / "SHA256SUMS"
+        sums.write_text(sums.read_text() + "0" * 64 + "  extra.rpm\n")
+        rc, out = self.tool("update")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("SHA256SUMS の署名を確かめられませんでした", out)
+        self.assertEqual(self.calls("dnf"), [])
+
+    def test_release_signed_by_another_key_is_refused(self):
+        import tempfile
+        from ubp import signing
+
+        self.seed()
+        with tempfile.TemporaryDirectory() as directory:
+            other, _ = signing.generate(directory, "someone else")
+            signing.sign(other, str(self.site / "latest" / "download" / "SHA256SUMS"))
+        rc, out = self.tool("update")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("SHA256SUMS の署名を確かめられませんでした", out)
+        self.assertEqual(self.calls("dnf"), [])
+
+    def test_missing_signing_key_stops_everything(self):
+        self.seed()
+        self.env["UBP_TEST_SIGNING_KEY"] = ""
+        rc, out = self.tool("update")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("公開鍵が設定されていません", out)
+        self.assertEqual(self.calls("dnf"), [])
+
     def test_tampered_manifest_is_refused(self):
         self.seed()
         path = self.site / "latest" / "download" / "manifest.json"

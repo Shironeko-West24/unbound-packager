@@ -30,4 +30,10 @@
 - rpm: `unbound-*.src.rpm`
 - deb: `unbound_*.dsc`、`unbound_*.debian.tar.*`、`unbound_*.orig.tar.gz`
 
+リリースは削除せず、残し続けます。バイナリを受け取った人が、対応するソースを入手できるようにするためです。
+
 ビルドの手順は、このリポジトリの `packaging/` と `.github/workflows/` にあります。
+
+## 同梱する鍵
+
+`packaging/keys/nlnetlabs-releases-g2.asc` は、NLnet Labs が公開しているリリース署名鍵 G2（https://nlnetlabs.nl/downloads/keys/releases-g2.asc ）の写しです。上流のソースの署名を確かめるためだけに使います。

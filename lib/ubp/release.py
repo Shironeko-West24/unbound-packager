@@ -127,6 +127,8 @@ def notes(combined, repository):
 
 
 def publish(target, combined, repository, sha, gh=run):
+    if not os.path.isfile(os.path.join(target, "SHA256SUMS.sig")):
+        raise UbpError("署名（SHA256SUMS.sig）がないため、公開できません。")
     tag = combined["tag"]
     notes_path = os.path.join(os.path.dirname(target), "release-notes.md")
     with open(notes_path, "w", encoding="utf-8") as handle:
@@ -138,13 +140,3 @@ def publish(target, combined, repository, sha, gh=run):
         "--notes-file", notes_path, *files,
     ])
     return tag
-
-
-def prune(tags, keep, repository, gh=run):
-    parsed = sorted((p for p in map(parse_tag, tags) if p), key=lambda p: (versions.parse(p[0]), p[1]))
-    removed = []
-    for version, revision in parsed[:-keep] if keep > 0 else []:
-        tag = tag_name(version, revision)
-        gh(["gh", "release", "delete", tag, "--repo", repository, "--yes", "--cleanup-tag"], check=False)
-        removed.append(tag)
-    return removed
