@@ -32,7 +32,7 @@ DNS サーバーに `unbound-update` を置き、取得元を設定します。�
 curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/unbound-update
 curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/SHA256SUMS
 curl -fsSLO https://github.com/Shironeko-West24/unbound-packager/releases/latest/download/SHA256SUMS.sig
-echo 'unbound-packager namespaces="unbound-packager-release" @RELEASE_SIGNING_PUBLIC_KEY@' > allowed_signers
+echo 'unbound-packager namespaces="unbound-packager-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPo9E4zPNh46kOUFbk8L9L4EcHQcr5mzWUR7TEhtwmiy unbound-packager release' > allowed_signers
 ssh-keygen -Y verify -f allowed_signers -I unbound-packager -n unbound-packager-release -s SHA256SUMS.sig < SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 sudo install -m 755 unbound-update /usr/local/sbin/unbound-update
