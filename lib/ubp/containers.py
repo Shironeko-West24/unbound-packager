@@ -131,7 +131,8 @@ def test_packages(code, work, os_name, checks):
         json.dump(report, handle, ensure_ascii=False, indent=1)
     failed = [r for r in report["results"] if not r["ok"]]
     if rc != 0 or not report.get("ok") or failed:
-        lines = [f"  ✗ {r['name']}: {r.get('detail', '')}" for r in failed]
-        raise UbpError(f"{os_name}: パッケージのテストに失敗しました。\n" + "\n".join(lines))
-    log(f"{os_name}: パッケージのテストに合格しました（{len(report['results'])} 項目）。")
+        lines = [f"  NG {r['name']}: {r.get('detail', '')}" for r in failed]
+        total = len(report["results"])
+        raise UbpError(f"{os_name}: パッケージのテスト {total} 項目中 {total - len(failed)} 項目 OK、{len(failed)} 項目 NG\n" + "\n".join(lines))
+    log(f"{os_name}: パッケージのテスト {len(report['results'])} 項目すべて OK")
     return report
