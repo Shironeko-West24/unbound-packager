@@ -27,7 +27,7 @@ class Box:
 
     def record(self, name, ok, detail=""):
         self.results.append((name, bool(ok), detail))
-        log(f"  [{'合格' if ok else '失敗'}] {name}" + ("" if ok else f"\n      {detail[-2000:]}"))
+        log(f"  {'OK' if ok else 'NG'} {name}" + ("" if ok else "\n     " + detail[-2000:].strip().replace("\n", "\n     ")))
 
 
 def os_versions_pinned_away(policy):
@@ -71,8 +71,9 @@ def run(code, work, os_name, tag, checks):
         shutil.rmtree(os.path.dirname(staged), ignore_errors=True)
     failed = [item for item in box.results if not item[1]]
     if failed:
-        raise UbpError(f"{os_name}: サーバー側コマンドの実地テストに失敗しました（{len(failed)}/{len(box.results)} 項目）。\n" + "\n".join(f"  ✗ {n}: {d[-400:]}" for n, _, d in failed))
-    log(f"{os_name}: サーバー側コマンドの実地テストに合格しました（{len(box.results)} 項目）。")
+        total = len(box.results)
+        raise UbpError(f"{os_name}: unbound-update の実地テスト {total} 項目中 {total - len(failed)} 項目 OK、{len(failed)} 項目 NG\n" + "\n".join(f"  NG {n}: {d[-400:]}" for n, _, d in failed))
+    log(f"{os_name}: unbound-update の実地テスト {len(box.results)} 項目すべて OK")
     return box.results
 
 

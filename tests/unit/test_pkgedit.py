@@ -154,6 +154,26 @@ class InTestSelectionTest(unittest.TestCase):
         self.assertEqual([os.path.basename(p) for p in debs], ["unbound_1.26.2-0+local1_amd64.deb"])
 
 
+class InTestOutputTest(unittest.TestCase):
+    def test_results_are_shown_as_ok_and_ng(self):
+        import contextlib
+        import importlib.util
+        import io
+
+        spec = importlib.util.spec_from_file_location("ubp_intest_output", helpers.ROOT / "packaging" / "intest.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            module.record("全サブパッケージの導入", True)
+            module.record("名前解決と DNSSEC の確認", False, "example.com（127.0.0.1）: 名前解決できません（rcode 2）\n次の行")
+        self.assertEqual(
+            buffer.getvalue(),
+            "OK 全サブパッケージの導入\nNG 名前解決と DNSSEC の確認\n   example.com（127.0.0.1）: 名前解決できません（rcode 2）\n   次の行\n",
+        )
+        self.assertNotIn("合格", buffer.getvalue())
+
+
 class DebTest(unittest.TestCase):
     def test_rules(self):
         text, count = pkgedit.normalize_configure(RULES, OPTIONS["configure"], pkgedit.DEB_CONFIGURE_ANCHOR)

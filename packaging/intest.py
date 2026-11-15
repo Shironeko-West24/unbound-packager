@@ -20,7 +20,7 @@ RESULTS = []
 
 def record(name, ok, detail=""):
     RESULTS.append({"name": name, "ok": bool(ok), "detail": detail[-800:]})
-    print(f"[{'合格' if ok else '失敗'}] {name} {detail[-300:] if not ok else ''}", flush=True)
+    print(f"{'OK' if ok else 'NG'} {name}" + ("" if ok else "\n   " + detail[-300:].strip().replace("\n", "\n   ")), flush=True)
 
 
 def sh(cmd, env=None):
