@@ -44,4 +44,5 @@
 | 外部の貢献者のワークフローに承認が要ること | 「公開フォークからのワークフロー実行の承認」 | https://docs.github.com/en/enterprise-server@3.12/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/approving-workflow-runs-from-public-forks | 一次情報 |
 | ジョブの `env` で `runner` コンテキストを使えないこと | 「Contexts reference」の「Context availability」の表 | https://raw.githubusercontent.com/github/docs/main/content/actions/reference/workflows-and-actions/contexts.md | 一次情報 |
 | ランナーの既定の環境変数 `RUNNER_TEMP` | 「Variables reference」の既定の環境変数の表 | https://raw.githubusercontent.com/github/docs/main/content/actions/reference/workflows-and-actions/variables.md | 一次情報 |
-| ランナーに Podman と Docker が入っていること | GitHub のランナーのリリースノートの転載 | https://newreleases.io/project/github/actions/runner-images/release/ubuntu24%2F20260804.265 | 二次情報 |
+| ランナーのラベル `ubuntu-26.04` | runner-images の「Available Images」の表 | https://raw.githubusercontent.com/actions/runner-images/main/README.md | 一次情報 |
+| `ubuntu-26.04` のランナーに Podman（5.7.0）と systemd（259.9）が入っていること | Ubuntu 26.04 のイメージの説明（イメージの版 20261111.196.1） | https://raw.githubusercontent.com/actions/runner-images/main/images/ubuntu/Ubuntu2604-Readme.md | 一次情報 |
