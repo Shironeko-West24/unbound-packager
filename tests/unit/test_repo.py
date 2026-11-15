@@ -154,6 +154,12 @@ class HygieneTest(unittest.TestCase):
                 offenders.append(str(path.relative_to(helpers.ROOT)))
         self.assertEqual(offenders, [])
 
+    def test_claude_code_omits_session_links(self):
+        import json
+
+        settings = json.loads((helpers.ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["attribution"], {"commit": "Co-Authored-By: Claude <noreply@anthropic.com>", "pr": "", "sessionUrl": False})
+
     def test_required_documents_exist(self):
         for name in ("README.md", "LICENSE", "NOTICE.md", "CLAUDE.md", "docs/usage.md", "docs/maintenance.md", "docs/verification.md"):
             self.assertTrue((helpers.ROOT / name).is_file(), name)
