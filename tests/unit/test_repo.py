@@ -37,6 +37,15 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn(": write", text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
 
+    def test_ci_skips_only_the_build_for_document_changes(self):
+        steps = {step.splitlines()[0]: step for step in self.text("ci.yml").split("      - name: ")[1:]}
+        self.assertNotIn("if:", steps["自動テスト"])
+        self.assertNotIn("if:", steps["変更の確認"])
+        for name in ("上流の最新版の確認", "ビルドとテスト"):
+            self.assertIn("if: steps.changes.outputs.build == 'true'", steps[name], name)
+        self.assertNotIn("paths-ignore", self.text("ci.yml"))
+        self.assertNotIn("paths:", self.text("ci.yml"))
+
     def test_release_runs_only_when_started_by_hand(self):
         text = self.text("release.yml")
         head = text.split("permissions:")[0]

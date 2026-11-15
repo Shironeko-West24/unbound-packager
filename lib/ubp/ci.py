@@ -12,6 +12,8 @@ from .github import GitHub, http_transport
 from .util import LOG, UbpError, add_secret, eprint, log, run
 
 CODE = Path(__file__).resolve().parents[2]
+DOCUMENTS = ("README.md", "SECURITY.md", "NOTICE.md", "CLAUDE.md", "LICENSE")
+DOCUMENT_DIRS = ("docs/",)
 
 
 def env(name, default=""):
@@ -99,6 +101,43 @@ def cmd_detect(args):
 
 def cmd_latest(args):
     output(version=upstream.detect_latest())
+    return 0
+
+
+def documents_only(files):
+    return bool(files) and all(name in DOCUMENTS or name.startswith(DOCUMENT_DIRS) for name in files)
+
+
+def changed_files(base, head, cwd):
+    run(["git", "fetch", "-q", "--depth", "200", "origin", base, head], cwd=cwd, timeout=300)
+    rc, out, _ = run(["git", "merge-base", base, head], check=False, cwd=cwd)
+    if rc != 0:
+        return None
+    _, out, _ = run(["git", "diff", "--name-only", "--no-renames", "-z", out.strip(), head], cwd=cwd)
+    return [name for name in out.split("\0") if name]
+
+
+def cmd_changes(args):
+    base, head = env("UBP_BASE_SHA"), env("UBP_HEAD_SHA")
+    if env("GITHUB_EVENT_NAME") != "pull_request" or not base or not head:
+        log("プルリクエスト以外の実行のため、ビルドとテストも行います。")
+        output(build=True)
+        return 0
+    try:
+        files = changed_files(base, head, str(CODE))
+    except UbpError as exc:
+        log(str(exc))
+        files = None
+    if files is None:
+        log("変更されたファイルを調べられなかったため、ビルドとテストも行います。")
+        build = True
+    elif documents_only(files):
+        log(f"文書だけの変更です（{len(files)} ファイル）。ビルドとテストは省きます。")
+        build = False
+    else:
+        log("文書以外の変更があるため、ビルドとテストを行います。")
+        build = True
+    output(build=build)
     return 0
 
 
@@ -234,6 +273,7 @@ def cmd_selftest(args):
 COMMANDS = {
     "detect": cmd_detect,
     "latest": cmd_latest,
+    "changes": cmd_changes,
     "pipeline": cmd_pipeline,
     "sign": cmd_sign,
     "publish": cmd_publish,

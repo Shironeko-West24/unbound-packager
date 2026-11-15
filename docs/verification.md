@@ -22,6 +22,8 @@
 4. 両 OS のコンテナでのパッケージのテスト：全サブパッケージの導入、統一したビルドオプションとサーバー設定、モジュールの並び、PIE と RELRO NOW、リンク先のライブラリ、ライセンス文書、各コマンド、Python バインディング、`unbound-checkconf`、起動と安定、名前解決と DNSSEC の検証
 5. 両 OS のコンテナでの `unbound-update` の実地テスト（実行ごとに作る一時的な鍵でリリースに署名する）：署名のないリリースの拒否、初回の導入、OS 標準の unbound の除外、設定の保存と取り込み、入れ替え、確認に失敗したときの切り戻し、改ざんされたパッケージの拒否、コマンド自体の更新、解除
 
+文書（`README.md`、`SECURITY.md`、`NOTICE.md`、`CLAUDE.md`、`LICENSE`、`docs/` 以下）だけを変えたプルリクエストでは、1 だけを行います。
+
 ファイアウォールの操作は、コンテナでは動かせないため、実地テストに含まれません。
 
 ## 出典
@@ -53,5 +55,6 @@
 | 成果物は REST API では作れず、アクションで保存すること | 「REST API endpoints for GitHub Actions artifacts」 | https://raw.githubusercontent.com/github/docs/main/content/rest/actions/artifacts.md | 一次情報 |
 | `actions/upload-artifact` v7.0.2 のコミットと入力（`name`、`path`、`if-no-files-found`、`retention-days`） | タグ v7.0.2 の `action.yml` | https://raw.githubusercontent.com/actions/upload-artifact/cf430e030ddbb5b0abf93d22962f4752f3646cd9/action.yml | 一次情報 |
 | `actions/download-artifact` v8.0.2 のコミットと入力（`name`、`path`） | タグ v8.0.2 の `action.yml` | https://raw.githubusercontent.com/actions/download-artifact/9000827ccba6bdab643e8b6fd33ac0654aef8333/action.yml | 一次情報 |
+| パスの条件でワークフローを省くと、必須のチェックが「Pending」のまま残ること（`paths-ignore` を使わない理由） | 「Troubleshooting required status checks」の表 | https://raw.githubusercontent.com/github/docs/main/content/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks.md | 一次情報 |
 | ランナーのラベル `ubuntu-26.04` | runner-images の「Available Images」の表 | https://raw.githubusercontent.com/actions/runner-images/main/README.md | 一次情報 |
 | `ubuntu-26.04` のランナーに Podman（5.7.0）と systemd（259.9）が入っていること | Ubuntu 26.04 のイメージの説明（イメージの版 20261111.196.1） | https://raw.githubusercontent.com/actions/runner-images/main/images/ubuntu/Ubuntu2604-Readme.md | 一次情報 |
