@@ -1,0 +1,4 @@
+FROM docker.io/rockylinux/rockylinux:10
+RUN dnf -y install dnf-plugins-core rpm-build rpmdevtools git-core patch python3 gnupg2 \
+    && dnf config-manager --set-enabled crb \
+    && dnf clean all

@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      UBP_ENGINE: "sudo podman"
+    steps:
+      - name: ソースの取得
+        env:
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${PR_SHA:-$GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
+      - name: 自動テスト
+        run: python3 -I tests/run_all.py
+
+      - name: 上流の最新版の確認
+        id: latest
+        run: python3 -I tools/ci.py latest
+
+      - name: ビルドとテスト
+        env:
+          UBP_VERSION: ${{ steps.latest.outputs.version }}
+          UBP_REVISION: "1"
+        run: python3 -I tools/ci.py pipeline

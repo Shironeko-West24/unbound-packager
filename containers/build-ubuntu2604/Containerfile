@@ -1,0 +1,6 @@
+FROM docker.io/library/ubuntu:26.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get -y install --no-install-recommends build-essential devscripts dpkg-dev git patch python3 ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*

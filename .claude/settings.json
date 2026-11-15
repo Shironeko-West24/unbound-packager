@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(gh workflow run *)",
+      "Bash(gh release *)",
+      "Bash(gh secret *)",
+      "Bash(gh api * -X DELETE *)",
+      "Bash(git push * main*)",
+      "Bash(git push --force*)"
+    ]
+  }
+}

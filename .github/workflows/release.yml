@@ -1,0 +1,98 @@
+name: release
+
+on:
+  schedule:
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "上流の版（空なら最新）"
+        required: false
+        default: ""
+      rebuild:
+        description: "公開済みの版を、ビルド番号を上げて作り直す"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || vars.SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: write
+      issues: write
+      actions: write
+    env:
+      UBP_ENGINE: "sudo podman"
+    steps:
+      - name: ソースの取得
+        run: |
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git fetch -q --depth 1 origin "${GITHUB_SHA}"
+          git checkout -q FETCH_HEAD
+
+      - name: 新版の検知
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REBUILD: ${{ inputs.rebuild }}
+        run: python3 -I tools/ci.py detect
+
+      - name: 検知の通知
+        if: steps.detect.outputs.first == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          UBP_VERSION: ${{ steps.detect.outputs.version }}
+        run: python3 -I tools/ci.py notify-new
+
+      - name: 自動テスト
+        if: steps.detect.outputs.needed == 'true'
+        run: python3 -I tests/run_all.py
+
+      - name: ビルドとテスト
+        if: steps.detect.outputs.needed == 'true'
+        env:
+          UBP_VERSION: ${{ steps.detect.outputs.version }}
+          UBP_REVISION: ${{ steps.detect.outputs.revision }}
+        run: python3 -I tools/ci.py pipeline
+
+      - name: 公開
+        if: steps.detect.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I tools/ci.py publish
+
+      - name: 成功の記録と通知
+        if: steps.detect.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 -I tools/ci.py on-success
+
+      - name: 失敗の記録と通知
+        if: failure() && steps.detect.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          UBP_VERSION: ${{ steps.detect.outputs.version }}
+          UBP_ATTEMPT: ${{ steps.detect.outputs.attempt }}
+        run: python3 -I tools/ci.py on-failure
+
+      - name: 定期実行の維持
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          UBP_VERSION: ${{ steps.detect.outputs.version }}
+          UBP_PUBLISHED: ${{ steps.detect.outputs.published }}
+        run: python3 -I tools/ci.py keepalive

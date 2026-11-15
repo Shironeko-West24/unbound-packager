@@ -1,0 +1,89 @@
+{
+  "configure": {
+    "pythonmodule": "--with-pythonmodule",
+    "pyunbound": "--with-pyunbound",
+    "subnet": "--enable-subnet",
+    "dnstap": "--enable-dnstap",
+    "systemd": "--enable-systemd",
+    "libnghttp2": "--with-libnghttp2",
+    "libevent": "--with-libevent",
+    "cachedb": "--disable-cachedb",
+    "libhiredis": "--without-libhiredis",
+    "ipsecmod": "--disable-ipsecmod",
+    "tfo-client": "--enable-tfo-client",
+    "tfo-server": "--enable-tfo-server",
+    "sha1": "--disable-sha1",
+    "gost": "--disable-gost",
+    "ecdsa": "--enable-ecdsa",
+    "sha2": "--enable-sha2",
+    "linux-ip-local-port-range": "--enable-linux-ip-local-port-range",
+    "pie": "--enable-pie",
+    "relro-now": "--enable-relro-now",
+    "chroot-dir": "--with-chroot-dir="
+  },
+  "configure_exceptions": [
+    {
+      "marker": "--with-libunbound-only",
+      "keep": [
+        "pythonmodule",
+        "pyunbound"
+      ]
+    }
+  ],
+  "expected_modules": "dns64 python subnetcache respip validator iterator",
+  "server_options": {
+    "harden-referral-path": "no"
+  },
+  "drop_patches": [
+    "*system-tls*",
+    "*system_tls*",
+    "*crypto-polic*",
+    "*crypto_polic*"
+  ],
+  "disabled_tests": [],
+  "drop_build_deps": {
+    "ubuntu2604": [
+      "libhiredis-dev"
+    ]
+  },
+  "linked_libraries": [
+    "libevent",
+    "libnghttp2",
+    "libssl",
+    "libpython",
+    "libprotobuf-c",
+    "libsystemd"
+  ],
+  "maintainer": "unbound-packager (unofficial build) <Shironeko-West24@users.noreply.github.com>",
+  "vendor": "unbound-packager (unofficial build)",
+  "allowed_packaging_licenses": [
+    "GPL-3",
+    "GPL-3+",
+    "GPL-2+",
+    "BSD-3-clause",
+    "BSD-2-clause",
+    "Expat",
+    "MIT",
+    "ISC"
+  ],
+  "allowed_spec_licenses": [
+    "BSD-3-Clause",
+    "BSD"
+  ],
+  "license_files": [
+    "/usr/share/licenses/unbound*/LICENSE",
+    "/usr/share/doc/unbound*/LICENSE",
+    "/usr/share/doc/unbound/copyright",
+    "/usr/share/doc/libunbound*/copyright"
+  ],
+  "checks": {
+    "resolve": [
+      "example.com"
+    ],
+    "dnssec_valid": "nlnetlabs.nl",
+    "dnssec_bogus": "",
+    "local": []
+  },
+  "max_attempts": 3,
+  "keep_releases": 5
+}

@@ -1,0 +1,1140 @@
+#!/usr/bin/python3 -I
+import argparse
+import fcntl
+import hashlib
+import io
+import ipaddress
+import json
+import os
+import random
+import re
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+
+TOOL_VERSION = 1
+ROOT = os.environ.get("UBP_TEST_ROOT", "")
+TEST_DNS = os.environ.get("UBP_TEST_DNS", "")
+ETC_DIR = ROOT + "/etc/unbound-packager"
+CONFIG_PATH = ETC_DIR + "/unbound-update.conf"
+STATE_DIR = ROOT + "/var/lib/unbound-packager"
+CONF_DIR = ROOT + "/etc/unbound"
+DNF_CONF = ROOT + "/etc/dnf/dnf.conf"
+APT_PREF = ROOT + "/etc/apt/preferences.d/unbound-packager"
+APT_UU = ROOT + "/etc/apt/apt.conf.d/52unbound-packager"
+TOOL_NAME = "unbound-update"
+REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
+GEN_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+~_:-]{0,79}$")
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-\d+$")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+NAME_RE = re.compile(r"^[A-Za-z0-9_]([A-Za-z0-9_.-]{0,251}[A-Za-z0-9])?\.?$")
+PKG_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,63}$")
+FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+~-]{0,199}$")
+MAX_FILE = 300 * 1024 * 1024
+KEEP_BACKUPS = 5
+
+SCHEMA = {
+    "source": {"repository": ("repo", ""), "base_url": ("url", "")},
+    "packages": {"install": ("packages", [])},
+    "checks": {
+        "resolve": ("names", ["example.com"]),
+        "dnssec_valid": ("name", ""),
+        "dnssec_bogus": ("name", ""),
+        "local": ("names", []),
+        "lan_address": ("ip", ""),
+        "stable_seconds": ("int", 15),
+    },
+    "migrate": {"old_config_dir": ("path", "")},
+}
+
+CONFIG_TEMPLATE = """# unbound-update の設定です。値を変えたら、unbound-update verify で確かめてください。
+
+[source]
+repository = @REPOSITORY@
+
+[packages]
+# 導入するパッケージ名を空白で区切って書きます。空なら、実行に必要なものを選びます。
+install =
+
+[checks]
+# 更新直後に名前解決を確かめる名前（空白区切り）
+resolve = example.com
+# DNSSEC の検証済み（AD）になるはずの名前。空なら確認しません。
+dnssec_valid = nlnetlabs.nl
+# 署名が壊れていて SERVFAIL になるはずの名前。空なら確認しません。
+dnssec_bogus =
+# 確認に加えるローカルの名前（空白区切り）
+local =
+# このサーバーの LAN 側の IP アドレス。書くと、127.0.0.1 に加えてここにも問い合わせます。
+lan_address =
+# 起動後、止まらないことを見る秒数
+stable_seconds = 15
+
+[migrate]
+# 旧サーバーの設定ディレクトリ。空なら自動で判定します。
+old_config_dir =
+"""
+
+
+class StepError(Exception):
+    def __init__(self, stage, detail):
+        super().__init__(detail)
+        self.stage = stage
+        self.detail = detail
+
+
+class Fatal(Exception):
+    def __init__(self, message, code=2):
+        super().__init__(message)
+        self.code = code
+
+
+def say(message=""):
+    print(message, flush=True)
+
+
+def run(cmd, env=None, timeout=1800):
+    full_env = dict(os.environ)
+    if not ROOT:
+        full_env["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+    full_env["LC_ALL"] = "C"
+    full_env.update(env or {})
+    try:
+        proc = subprocess.run(cmd, capture_output=True, env=full_env, timeout=timeout)
+    except FileNotFoundError:
+        return 127, "", f"コマンドがありません: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return 124, "", f"時間切れ: {cmd[0]}"
+    return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
+
+
+def tail(out, err, lines=12):
+    text = (err.strip() + "\n" + out.strip()).strip()
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def parse_config(text):
+    config = {section: {key: default for key, (_, default) in keys.items()} for section, keys in SCHEMA.items()}
+    errors = []
+    section = None
+    seen = set()
+    for number, raw in enumerate(text.lstrip("﻿").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("["):
+            if not line.endswith("]") or line[1:-1].strip() not in SCHEMA:
+                errors.append((number, f"知らないセクションです: {line}（使えるもの: {'、'.join(SCHEMA)}）"))
+                section = None
+            else:
+                section = line[1:-1].strip()
+            continue
+        if "=" not in line:
+            errors.append((number, f"「キー = 値」の形で書いてください: {line}"))
+            continue
+        if section is None:
+            errors.append((number, "セクション（[source] など）の中に書いてください。"))
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key not in SCHEMA[section]:
+            errors.append((number, f"知らないキーです: {key}（[{section}] で使えるもの: {'、'.join(SCHEMA[section])}）"))
+            continue
+        if (section, key) in seen:
+            errors.append((number, f"キー {key} が重複しています。"))
+            continue
+        seen.add((section, key))
+        kind = SCHEMA[section][key][0]
+        parsed, problem = convert(kind, value)
+        if problem:
+            errors.append((number, f"{key}: {problem}"))
+        else:
+            config[section][key] = parsed
+    return config, errors
+
+
+def convert(kind, value):
+    if kind == "repo":
+        return (value, "") if REPO_RE.match(value) else (None, "「所有者/リポジトリ名」の形で書いてください。")
+    if kind == "url":
+        if value == "" or value.startswith("https://") or re.match(r"^http://(127\.0\.0\.1|localhost)(:\d+)?(/|$)", value):
+            return value.rstrip("/"), ""
+        return None, "https:// で始まる URL を書いてください。"
+    if kind == "packages":
+        items = value.split()
+        bad = [item for item in items if not PKG_RE.match(item)]
+        return (items, "") if not bad else (None, f"パッケージ名として使えません: {' '.join(bad)}")
+    if kind == "names":
+        items = value.split()
+        bad = [item for item in items if not NAME_RE.match(item)]
+        return (items, "") if not bad else (None, f"名前として使えません: {' '.join(bad)}")
+    if kind == "name":
+        return (value, "") if value == "" or NAME_RE.match(value) else (None, f"名前として使えません: {value}")
+    if kind == "ip":
+        if value == "":
+            return "", ""
+        try:
+            return str(ipaddress.ip_address(value)), ""
+        except ValueError:
+            return None, f"IP アドレスとして読めません: {value}"
+    if kind == "int":
+        if re.match(r"^(0|[1-9][0-9]{0,3})$", value) and int(value) <= 600:
+            return int(value), ""
+        return None, f"0 から 600 の整数を書いてください: {value}"
+    if kind == "path":
+        return (value, "") if value == "" or re.match(r"^/[A-Za-z0-9_./-]+$", value) else (None, f"絶対パスを書いてください: {value}")
+    raise AssertionError(kind)
+
+
+def load_config(need_repository=True):
+    try:
+        raw = open(CONFIG_PATH, "rb").read()
+    except FileNotFoundError:
+        if not need_repository:
+            return parse_config("")[0]
+        raise Fatal(f"設定ファイルがありません: {CONFIG_PATH}\n先に次を実行してください: {TOOL_NAME} init --repository 所有者/リポジトリ名")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise Fatal(f"{CONFIG_PATH}: UTF-8 として読めません。")
+    config, errors = parse_config(text)
+    if need_repository and not config["source"]["repository"] and not errors:
+        errors.append((1, "[source] の repository がありません。"))
+    if errors:
+        lines = [f"{CONFIG_PATH}:{number}: {message}" for number, message in errors]
+        raise Fatal(f"設定ファイルに誤りが {len(lines)} 件あります。何も変更していません。\n" + "\n".join(lines))
+    if not config["source"]["base_url"] and config["source"]["repository"]:
+        config["source"]["base_url"] = f"https://github.com/{config['source']['repository']}/releases"
+    return config
+
+
+def os_info():
+    ident = like = version = ""
+    try:
+        for line in open(ROOT + "/etc/os-release", encoding="utf-8"):
+            key, _, value = line.strip().partition("=")
+            value = value.strip('"')
+            if key == "ID":
+                ident = value
+            elif key == "ID_LIKE":
+                like = value
+            elif key == "VERSION_ID":
+                version = value
+    except OSError:
+        pass
+    words = [ident] + like.split()
+    if any(word in ("rhel", "fedora", "rocky", "centos") for word in words):
+        family = "rpm"
+    elif any(word in ("debian", "ubuntu") for word in words):
+        family = "deb"
+    else:
+        family = ""
+    key = ""
+    if family == "rpm" and version.split(".")[0] == "10":
+        key = "rocky10"
+    elif ident == "ubuntu" and version == "26.04":
+        key = "ubuntu2604"
+    return {"id": ident, "version": version, "family": family, "key": key}
+
+
+def family():
+    info = os_info()
+    if not info["family"]:
+        raise StepError("os", f"対応していない OS です: {info['id'] or '不明'}")
+    return info["family"]
+
+
+def load_state():
+    try:
+        with open(os.path.join(STATE_DIR, "state.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_state(state):
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    tmp = os.path.join(STATE_DIR, "state.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, ensure_ascii=False, indent=1, sort_keys=True)
+    os.replace(tmp, os.path.join(STATE_DIR, "state.json"))
+
+
+class Lock:
+    def __enter__(self):
+        os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+        self.fd = os.open(os.path.join(STATE_DIR, "lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self.fd)
+            raise Fatal("別の unbound-update が実行中です。終わってから実行し直してください。", 75)
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+        os.close(self.fd)
+
+
+def installed_version():
+    if family() == "rpm":
+        rc, out, _ = run(["rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}", "unbound"])
+        return out.strip() if rc == 0 else ""
+    rc, out, _ = run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev}|${Version}", "unbound"])
+    if rc != 0 or not out.startswith("ii"):
+        return ""
+    return out.split("|", 1)[1].strip()
+
+
+def service_show():
+    _, out, _ = run(["systemctl", "show", "unbound", "-p", "ActiveState", "-p", "SubState", "-p", "NRestarts", "-p", "MainPID"])
+    info = {}
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        info[key] = value.strip()
+    return info
+
+
+def http_get(url, limit=MAX_FILE):
+    request = urllib.request.Request(url, headers={"User-Agent": f"unbound-update/{TOOL_VERSION}"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            final = response.geturl()
+            if not (final.startswith("https://") or re.match(r"^http://(127\.0\.0\.1|localhost)(:\d+)?/", final)):
+                raise StepError("download", f"https ではない場所へ転送されました: {url}")
+            data = response.read(limit + 1)
+    except urllib.error.HTTPError as exc:
+        raise StepError("download", f"取得できませんでした（HTTP {exc.code}）: {url}")
+    except (urllib.error.URLError, OSError) as exc:
+        raise StepError("download", f"取得できませんでした（{type(exc).__name__}）: {url}")
+    if len(data) > limit:
+        raise StepError("download", f"ファイルが大きすぎます: {url}")
+    return data
+
+
+def parse_sums(data):
+    sums = {}
+    for line in data.decode("utf-8", "replace").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and re.match(r"^[0-9a-f]{64}$", parts[0]) and FILE_RE.match(parts[1].lstrip("*")):
+            sums[parts[1].lstrip("*")] = parts[0]
+    return sums
+
+
+def fetch_release_at(base):
+    sums = parse_sums(http_get(f"{base}/SHA256SUMS", 1 << 20))
+    raw = http_get(f"{base}/manifest.json", 1 << 22)
+    if sums.get("manifest.json") != hashlib.sha256(raw).hexdigest():
+        raise StepError("verify", "manifest.json の SHA-256 が SHA256SUMS と一致しません。")
+    try:
+        manifest = json.loads(raw.decode("utf-8"))
+        tag = manifest["tag"]
+        manifest["os"]
+    except (ValueError, KeyError, TypeError):
+        raise StepError("verify", "manifest.json を読めません。")
+    if not TAG_RE.match(str(tag)):
+        raise StepError("verify", "manifest.json のタグの形式が正しくありません。")
+    return {"base": base, "sums": sums, "manifest": manifest}
+
+
+def fetch_release(config, version=None, tag=None):
+    base_url = config["source"]["base_url"]
+    if tag:
+        if not TAG_RE.match(tag):
+            raise Fatal("--tag は v1.26.2-1 の形で指定してください。")
+        return fetch_release_at(f"{base_url}/download/{tag}")
+    if version:
+        if not VERSION_RE.match(version):
+            raise Fatal("--version は 1.26.2 の形で指定してください。")
+        found = None
+        for revision in range(1, 10):
+            try:
+                found = fetch_release_at(f"{base_url}/download/v{version}-{revision}")
+            except StepError as exc:
+                if exc.stage != "download":
+                    raise
+                break
+        if not found:
+            raise StepError("download", f"版 {version} のリリースが見つかりません。")
+        return found
+    return fetch_release_at(f"{base_url}/latest/download")
+
+
+def select_files(config, release):
+    key = os_info()["key"]
+    if not key:
+        info = os_info()
+        raise StepError("os", f"対応していない OS です: {info['id'] or '不明'} {info['version']}（対応: Rocky Linux 10、Ubuntu 26.04）")
+    entry = release["manifest"]["os"].get(key)
+    if not entry:
+        raise StepError("verify", f"このリリースには {key} 向けのパッケージがありません。")
+    names = [item["name"] for item in entry["files"]]
+    wanted = config["packages"]["install"]
+    if wanted:
+        missing = [name for name in wanted if name not in names]
+        if missing:
+            raise StepError("verify", f"設定の install にあるパッケージがリリースにありません: {' '.join(missing)}")
+        chosen = [item for item in entry["files"] if item["name"] in wanted]
+    else:
+        chosen = [
+            item for item in entry["files"]
+            if not item["name"].endswith(("-devel", "-dev", "-dracut")) and "debug" not in item["name"] and "dbgsym" not in item["name"]
+        ]
+    return entry, chosen
+
+
+def gen_dir(version):
+    if not GEN_RE.match(version or ""):
+        raise StepError("verify", "版の形式が正しくありません。")
+    return os.path.join(STATE_DIR, "packages", version)
+
+
+def download_generation(config, release):
+    entry, chosen = select_files(config, release)
+    version = entry["pkg_version"]
+    target = gen_dir(version)
+    incoming = target + ".incoming"
+    shutil.rmtree(incoming, ignore_errors=True)
+    os.makedirs(incoming, mode=0o700)
+    try:
+        for item in chosen:
+            name = item["file"]
+            if not FILE_RE.match(name):
+                raise StepError("verify", f"ファイル名が正しくありません: {name}")
+            data = http_get(f"{release['base']}/{name}")
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != item["sha256"] or digest != release["sums"].get(name):
+                raise StepError("verify", f"SHA-256 が一致しません: {name}")
+            with open(os.path.join(incoming, name), "wb") as handle:
+                handle.write(data)
+        trimmed = {"pkg_version": version, "files": chosen, "all_packages": entry.get("all_packages", []), "tag": release["manifest"]["tag"]}
+        with open(os.path.join(incoming, "manifest.json"), "w", encoding="utf-8") as handle:
+            json.dump(trimmed, handle, ensure_ascii=False)
+    except StepError:
+        shutil.rmtree(incoming, ignore_errors=True)
+        raise
+    shutil.rmtree(target, ignore_errors=True)
+    os.rename(incoming, target)
+    return version, trimmed
+
+
+def gen_files(version):
+    target = gen_dir(version)
+    try:
+        manifest = json.load(open(os.path.join(target, "manifest.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        raise StepError("install", f"版 {version} のパッケージがこのサーバーに残っていません。")
+    return [os.path.join(target, item["file"]) for item in manifest["files"]], manifest
+
+
+def precheck(version):
+    files, _ = gen_files(version)
+    if family() == "rpm":
+        rc, out, err = run(["dnf", "-y", "--disableexcludes=main", "install", "--downloadonly", *files])
+    else:
+        simulate = ["apt-get", "-s", "-y", "--allow-downgrades", "install", *files]
+        rc, out, err = run(simulate, env={"DEBIAN_FRONTEND": "noninteractive"})
+        if rc != 0:
+            say("依存関係を解決できませんでした。パッケージの一覧を更新（apt-get update）してから、もう一度確認します。")
+            run(["apt-get", "update"], env={"DEBIAN_FRONTEND": "noninteractive"})
+            rc, out, err = run(simulate, env={"DEBIAN_FRONTEND": "noninteractive"})
+    if rc != 0:
+        raise StepError("precheck", "依存関係を解決できません。\n" + tail(out, err))
+
+
+def pkg_install(version):
+    files, manifest = gen_files(version)
+    if family() == "rpm":
+        rc, out, err = run(["dnf", "-y", "--disableexcludes=main", "install", *files])
+        if rc == 0 and installed_version() != manifest["pkg_version"]:
+            rc, out, err = run(["rpm", "-Uvh", "--oldpackage", "--replacepkgs", *files])
+    else:
+        rc, out, err = run(
+            [
+                "apt-get", "-y", "--allow-downgrades",
+                "-o", "Dpkg::Options::=--force-confold",
+                "-o", "Dpkg::Options::=--force-confdef",
+                "install", *files,
+            ],
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+    if rc != 0:
+        raise StepError("install", "パッケージを導入できませんでした。\n" + tail(out, err))
+    now = installed_version()
+    if now != manifest["pkg_version"]:
+        raise StepError("install", f"導入後の版が一致しません（期待 {manifest['pkg_version']}、実際 {now or 'なし'}）。")
+
+
+def checkconf():
+    rc, out, err = run(["unbound-checkconf"])
+    if rc != 0:
+        raise StepError("checkconf", "unbound-checkconf が失敗しました。\n" + tail(out, err))
+
+
+def service_log(lines=15):
+    if ROOT:
+        return ""
+    rc, out, _ = run(["journalctl", "-u", "unbound", "-n", str(lines), "--no-pager", "-o", "cat"], timeout=30)
+    return f"\nunbound の直近のログ（journalctl -u unbound、{lines} 行）:\n" + out.strip() if rc == 0 and out.strip() else ""
+
+
+def start_and_watch(stable):
+    run(["systemctl", "enable", "unbound"])
+    rc, out, err = run(["systemctl", "restart", "unbound"])
+    if rc != 0:
+        raise StepError("start", "unbound を起動できませんでした。\n" + tail(out, err) + service_log())
+    base = service_show()
+    if base.get("ActiveState") != "active":
+        raise StepError("start", f"unbound が起動直後に止まりました（{base.get('ActiveState')}/{base.get('SubState')}）。" + service_log())
+    deadline = time.monotonic() + stable
+    while time.monotonic() < deadline:
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+        now = service_show()
+        if now.get("ActiveState") != "active":
+            raise StepError("start", f"unbound が起動後に止まりました（{now.get('ActiveState')}/{now.get('SubState')}）。" + service_log())
+        if now.get("NRestarts") != base.get("NRestarts") or now.get("MainPID") != base.get("MainPID"):
+            raise StepError("start", "unbound が自動再起動を繰り返しています。" + service_log())
+
+
+def dns_query(name, server, port, timeout=3.0):
+    qid = random.randrange(65536)
+    labels = [label for label in name.rstrip(".").split(".") if label]
+    qname = b"".join(bytes([len(label)]) + label.encode("ascii") for label in labels) + b"\0"
+    packet = struct.pack(">HHHHHH", qid, 0x0120, 1, 0, 0, 1) + qname + struct.pack(">HH", 1, 1)
+    packet += b"\0" + struct.pack(">HHIH", 41, 1232, 0x00008000, 0)
+    kind = socket.AF_INET6 if ":" in server else socket.AF_INET
+    with socket.socket(kind, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(timeout)
+        sock.sendto(packet, (server, port))
+        data, _ = sock.recvfrom(4096)
+    if len(data) >= 12 and struct.unpack(">H", data[2:4])[0] & 0x0200:
+        with socket.create_connection((server, port), timeout=timeout) as sock:
+            sock.sendall(struct.pack(">H", len(packet)) + packet)
+            want = struct.unpack(">H", sock.recv(2))[0]
+            data = b""
+            while len(data) < want:
+                chunk = sock.recv(want - len(data))
+                if not chunk:
+                    break
+                data += chunk
+    if len(data) < 12:
+        raise OSError("応答が短すぎます")
+    rid, flags, _, ancount = struct.unpack(">HHHH", data[:8])
+    if rid != qid:
+        raise OSError("応答の ID が一致しません")
+    return {"rcode": flags & 0xF, "ad": bool(flags & 0x20), "answers": ancount}
+
+
+def check_round(checks, attempts):
+    targets = [("127.0.0.1", 53)]
+    if checks.get("lan_address"):
+        targets.append((checks["lan_address"], 53))
+    if TEST_DNS:
+        host, _, port = TEST_DNS.rpartition(":")
+        targets = [(host, int(port))] * len(targets)
+    plan = [(name, "resolve") for name in list(checks.get("resolve", [])) + list(checks.get("local", []))]
+    if checks.get("dnssec_valid"):
+        plan.append((checks["dnssec_valid"], "valid"))
+    if checks.get("dnssec_bogus"):
+        plan.append((checks["dnssec_bogus"], "bogus"))
+    failures = []
+    for index, (server, port) in enumerate(targets):
+        label = "127.0.0.1" if index == 0 else checks["lan_address"]
+        for name, kind in plan:
+            problem = ""
+            for attempt in range(attempts):
+                try:
+                    reply = dns_query(name, server, port)
+                except (OSError, struct.error) as exc:
+                    problem = f"{name}（{label}）: 応答がありません（{type(exc).__name__}）"
+                else:
+                    if kind == "resolve" and (reply["rcode"] != 0 or reply["answers"] == 0):
+                        problem = f"{name}（{label}）: 名前解決できません（rcode {reply['rcode']}）"
+                    elif kind == "valid" and (reply["rcode"] != 0 or not reply["ad"]):
+                        problem = f"{name}（{label}）: DNSSEC の検証済み（AD）になりません（rcode {reply['rcode']}）"
+                    elif kind == "bogus" and reply["rcode"] != 2:
+                        problem = f"{name}（{label}）: 壊れた署名なのに SERVFAIL になりません（rcode {reply['rcode']}）"
+                    else:
+                        problem = ""
+                        break
+                if attempt + 1 < attempts and not ROOT:
+                    time.sleep(2)
+            if problem:
+                failures.append(problem)
+    return failures
+
+
+def local_check(checks, attempts=4, recovery_rounds=5, recovery_wait=10):
+    failures = check_round(checks, attempts)
+    retried = 0
+    flushed = False
+    while failures and retried < recovery_rounds:
+        retried += 1
+        rc, _, _ = run(["unbound-control", "flush_bogus"], timeout=30)
+        flushed = flushed or rc == 0
+        if not ROOT:
+            time.sleep(recovery_wait)
+        failures = check_round(checks, 1)
+        if not failures:
+            how = "検証に失敗した応答のキャッシュを消して" if flushed else "時間をおいて"
+            say(f"名前解決の確認に一度失敗したため、{how}確認し直したところ、成功しました（確認し直した回数: {retried}）。")
+    if failures:
+        message = "名前解決の確認に失敗しました。"
+        if retried:
+            how = "検証に失敗した応答のキャッシュを消して" if flushed else "unbound-control でキャッシュを消せなかったため、時間をおいて"
+            message += f"{how} {retried} 回確認し直しましたが、成功しませんでした。"
+        raise StepError("check", message + "\n" + "\n".join(failures))
+
+
+def safe_members(tar):
+    out = []
+    for member in tar.getmembers():
+        name = member.name
+        while name.startswith("./"):
+            name = name[2:]
+        if name in ("", "."):
+            continue
+        parts = name.split("/")
+        if name.startswith("/") or ".." in parts or "\\" in name or "\0" in name:
+            raise StepError("config", f"tar に危険な名前があります: {member.name}")
+        if member.isdir() or member.isreg():
+            out.append((name, member))
+        else:
+            out.append((name, None))
+    return out
+
+
+def extract_tree(tar, members, target, preserve_owner=False, owner=None):
+    skipped = []
+    os.makedirs(target, exist_ok=True)
+    for name, member in members:
+        dest = os.path.join(target, name)
+        if member is None:
+            skipped.append(name)
+            continue
+        if member.isdir():
+            os.makedirs(dest, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            if os.path.islink(dest):
+                os.unlink(dest)
+            with open(dest, "wb") as handle:
+                shutil.copyfileobj(tar.extractfile(member), handle)
+        os.chmod(dest, member.mode & 0o777)
+        if os.geteuid() == 0 and not ROOT:
+            if preserve_owner:
+                os.chown(dest, member.uid, member.gid)
+            elif owner:
+                os.chown(dest, owner[0], owner[1])
+    return skipped
+
+
+def backup_config(label):
+    if not os.path.isdir(CONF_DIR):
+        return ""
+    directory = os.path.join(STATE_DIR, "backups")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    path = os.path.join(directory, f"{label}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.tar")
+    with tarfile.open(path, "w") as tar:
+        tar.add(CONF_DIR, arcname=".")
+    os.chmod(path, 0o600)
+    return path
+
+
+def restore_config(path):
+    if not path or not os.path.exists(path):
+        return
+    with tarfile.open(path) as tar:
+        members = safe_members(tar)
+        keep = {name for name, _ in members}
+        for base, _, files in os.walk(CONF_DIR, topdown=False):
+            for entry in files:
+                full = os.path.join(base, entry)
+                if os.path.relpath(full, CONF_DIR) not in keep:
+                    os.unlink(full)
+        extract_tree(tar, members, CONF_DIR, preserve_owner=True)
+
+
+def prune():
+    state = load_state()
+    keep = {state.get("current"), state.get("previous")}
+    directory = os.path.join(STATE_DIR, "packages")
+    if os.path.isdir(directory):
+        for entry in os.listdir(directory):
+            if entry not in keep:
+                shutil.rmtree(os.path.join(directory, entry), ignore_errors=True)
+    backups = os.path.join(STATE_DIR, "backups")
+    if os.path.isdir(backups):
+        files = sorted(os.listdir(backups), key=lambda n: os.path.getmtime(os.path.join(backups, n)))
+        for entry in files[:-KEEP_BACKUPS]:
+            os.unlink(os.path.join(backups, entry))
+
+
+def hold(packages):
+    state = load_state()
+    record = state.get("hold") or {}
+    names = sorted(set(packages) | set(record.get("packages", [])))
+    if not names:
+        return names
+    if family() == "rpm":
+        lines = open(DNF_CONF, encoding="utf-8").read().split("\n") if os.path.exists(DNF_CONF) else ["[main]"]
+        if not any(line.strip() == "[main]" for line in lines):
+            lines = ["[main]"] + lines
+        section = ""
+        found = None
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped
+            elif section == "[main]" and re.match(r"^(excludepkgs|exclude)\s*=", stripped):
+                found = index
+        if found is None:
+            main_at = next(i for i, line in enumerate(lines) if line.strip() == "[main]")
+            lines.insert(main_at + 1, "excludepkgs=" + ",".join(names))
+            record["created_line"] = True
+        else:
+            key, _, value = lines[found].partition("=")
+            current = [item for item in re.split(r"[,\s]+", value.strip()) if item]
+            added = [name for name in names if name not in current]
+            lines[found] = key.rstrip() + "=" + ",".join(current + added)
+            record.setdefault("created_line", False)
+        os.makedirs(os.path.dirname(DNF_CONF), exist_ok=True)
+        tmp = DNF_CONF + ".ubp-tmp"
+        open(tmp, "w", encoding="utf-8").write("\n".join(lines))
+        os.replace(tmp, DNF_CONF)
+    else:
+        os.makedirs(os.path.dirname(APT_PREF), exist_ok=True)
+        open(APT_PREF, "w", encoding="utf-8").write("Package: " + " ".join(names) + "\nPin: release o=Ubuntu\nPin-Priority: -1\n")
+        os.makedirs(os.path.dirname(APT_UU), exist_ok=True)
+        entries = "".join(f'    "^{re.escape(name)}$";\n' for name in names)
+        open(APT_UU, "w", encoding="utf-8").write("Unattended-Upgrade::Package-Blacklist {\n" + entries + "};\n")
+    record["packages"] = names
+    state["hold"] = record
+    save_state(state)
+    return names
+
+
+def unhold():
+    state = load_state()
+    record = state.get("hold") or {}
+    names = record.get("packages", [])
+    if family() == "rpm":
+        if os.path.exists(DNF_CONF) and names:
+            out = []
+            section = ""
+            for line in open(DNF_CONF, encoding="utf-8").read().split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    section = stripped
+                if section == "[main]" and re.match(r"^(excludepkgs|exclude)\s*=", stripped):
+                    key, _, value = line.partition("=")
+                    rest = [item for item in re.split(r"[,\s]+", value.strip()) if item and item not in names]
+                    if not rest and record.get("created_line"):
+                        continue
+                    line = key.rstrip() + "=" + ",".join(rest)
+                out.append(line)
+            open(DNF_CONF, "w", encoding="utf-8").write("\n".join(out))
+    else:
+        for path in (APT_PREF, APT_UU):
+            if os.path.exists(path):
+                os.unlink(path)
+    state["hold"] = None
+    save_state(state)
+
+
+def firewall_open():
+    state = load_state()
+    record = state.get("firewall") or {}
+    if family() == "rpm":
+        _, out, _ = run(["systemctl", "is-active", "firewalld"])
+        if out.strip() != "active":
+            return "firewalld は動いていないため、何もしていません。"
+        rc, _, _ = run(["firewall-cmd", "--permanent", "--query-service=dns"])
+        if rc == 0:
+            return "firewalld はすでに dns を許可しています。"
+        rc, out, err = run(["firewall-cmd", "--permanent", "--add-service=dns"])
+        if rc != 0:
+            raise StepError("firewall", "firewalld に dns を追加できませんでした。\n" + tail(out, err))
+        run(["firewall-cmd", "--reload"])
+        record["opened"] = "firewalld"
+    else:
+        rc, out, _ = run(["ufw", "status"])
+        if rc != 0 or not out.startswith("Status: active"):
+            return "ufw は有効でないため、何もしていません。"
+        if re.search(r"(?m)^53(/\w+)?\s+ALLOW", out):
+            return "ufw はすでに 53 を許可しています。"
+        rc, out, err = run(["ufw", "allow", "53"])
+        if rc != 0:
+            raise StepError("firewall", "ufw で 53 を許可できませんでした。\n" + tail(out, err))
+        record["opened"] = "ufw"
+    state["firewall"] = record
+    save_state(state)
+    return f"{record['opened']} で DNS を許可しました。"
+
+
+def firewall_close():
+    state = load_state()
+    opened = (state.get("firewall") or {}).get("opened")
+    if opened == "firewalld":
+        run(["firewall-cmd", "--permanent", "--remove-service=dns"])
+        run(["firewall-cmd", "--reload"])
+    elif opened == "ufw":
+        run(["ufw", "delete", "allow", "53"])
+    state["firewall"] = None
+    save_state(state)
+    return opened or ""
+
+
+def checks_of(config):
+    return dict(config["checks"])
+
+
+def rollback_to(version, backup, stable):
+    try:
+        pkg_install(version)
+        restore_config(backup)
+        checkconf()
+        start_and_watch(stable)
+    except StepError as exc:
+        return False, f"{exc.stage}: {exc.detail}"
+    return True, ""
+
+
+def cmd_update(args):
+    config = load_config()
+    with Lock():
+        state = load_state()
+        current = state.get("current")
+        if not current:
+            raise Fatal(f"このサーバーには、まだこの仕組みで導入した版がありません。最初は次を実行してください: {TOOL_NAME} migrate")
+        release = fetch_release(config, args.version, args.tag)
+        entry, _ = select_files(config, release)
+        target = entry["pkg_version"]
+        now = installed_version()
+        say(f"導入済み: {now or 'なし'} / 対象: {target}（{release['manifest']['tag']}）")
+        if now == target and not args.force:
+            say("すでに対象の版です。何も変更していません。")
+            return 0
+        version, _ = download_generation(config, release)
+        say("パッケージを取得し、SHA-256 を照合しました。")
+        precheck(version)
+        stable = config["checks"]["stable_seconds"]
+        backup = backup_config("pre-" + re.sub(r"[^0-9A-Za-z.]", "_", version))
+        say("設定を退避しました。入れ替えます。")
+        try:
+            pkg_install(version)
+            checkconf()
+            start_and_watch(stable)
+            local_check(checks_of(config))
+        except StepError as exc:
+            say(f"失敗しました（{exc.stage}）。\n{exc.detail}")
+            ok, why = rollback_to(current, backup, stable)
+            if ok:
+                say(f"元の版 {current} へ切り戻しました。")
+                return 1
+            say(f"切り戻しにも失敗しました。至急、状態を確かめてください。\n{why}")
+            return 3
+        if current != version:
+            state["previous"] = current
+        state["current"] = version
+        save_state(state)
+        prune()
+        say(f"更新と確認が終わりました: {version}")
+        return 0
+
+
+def find_config_dir(given):
+    if given:
+        return given
+    for pid in ([] if ROOT else os.listdir("/proc")):
+        if not pid.isdigit():
+            continue
+        try:
+            if open(f"/proc/{pid}/comm").read().strip() != "unbound":
+                continue
+            parts = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        for index, part in enumerate(parts):
+            if part == b"-c" and index + 1 < len(parts):
+                return os.path.dirname(parts[index + 1].decode())
+    for candidate in ("/usr/local/etc/unbound", "/etc/unbound"):
+        if os.path.exists(os.path.join(ROOT + candidate, "unbound.conf")):
+            return candidate
+    return ""
+
+
+def cmd_save(args):
+    config = load_config(need_repository=False)
+    logical = find_config_dir(args.config_dir or config["migrate"]["old_config_dir"])
+    source = ROOT + logical if logical else ""
+    if not source or not os.path.isfile(os.path.join(source, "unbound.conf")):
+        raise Fatal("設定ディレクトリを判定できませんでした。--config-dir で場所を指定してください。")
+    meta = json.dumps({"config_dir": logical}).encode("utf-8")
+    fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        with tarfile.open(fileobj=handle, mode="w") as tar:
+            tar.add(source, arcname=".")
+            info = tarfile.TarInfo("./.ubp-meta.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+    say(f"設定を保存しました: {logical} → {args.output}")
+    say("このファイルには設定（unbound-control の鍵を含む場合があります）が入っています。扱いに注意してください。")
+    return 0
+
+
+def import_config(tar_path, old_prefix):
+    report = {"rewritten": [], "warnings": [], "skipped": []}
+    owner = None
+    if os.geteuid() == 0 and not ROOT:
+        import grp
+
+        try:
+            owner = (0, grp.getgrnam("unbound").gr_gid)
+        except KeyError:
+            owner = (0, 0)
+    with tarfile.open(tar_path) as tar:
+        members = safe_members(tar)
+        if not old_prefix:
+            try:
+                meta = json.loads(tar.extractfile([m for n, m in members if n == ".ubp-meta.json"][0]).read().decode("utf-8"))
+                old_prefix = str(meta.get("config_dir", ""))
+            except (IndexError, ValueError, AttributeError):
+                old_prefix = ""
+        if "unbound.conf" not in {name for name, _ in members}:
+            raise StepError("config", "保存したファイルに unbound.conf がありません。")
+        members = [(n, m) for n, m in members if n != ".ubp-meta.json"]
+        report["skipped"] = extract_tree(tar, members, CONF_DIR, owner=owner)
+    new_prefix = "/etc/unbound"
+    old = old_prefix.rstrip("/")
+    if old and not re.match(r"^/[A-Za-z0-9_./-]+$", old):
+        old = ""
+    for base, _, files in os.walk(CONF_DIR):
+        for entry in files:
+            full = os.path.join(base, entry)
+            try:
+                raw = open(full, "rb").read()
+            except OSError:
+                continue
+            if len(raw) > (1 << 20) or b"\0" in raw:
+                continue
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            rel = os.path.relpath(full, CONF_DIR)
+            if old and old != new_prefix and old in text:
+                count = text.count(old)
+                text = text.replace(old, new_prefix)
+                open(full, "w", encoding="utf-8").write(text)
+                report["rewritten"].append(f"{rel}: {count} か所")
+            if entry.endswith(".conf"):
+                for number, line in enumerate(text.splitlines(), 1):
+                    body = line.split("#", 1)[0]
+                    match = re.search(r":\s*\"?(/[^\"\s]+)", body)
+                    if match and not match.group(1).startswith(new_prefix):
+                        report["warnings"].append(f"{rel}:{number}: {body.strip()}")
+    return report
+
+
+def cmd_migrate(args):
+    config = load_config()
+    if args.config and not os.path.isfile(args.config):
+        raise Fatal(f"ファイルがありません: {args.config}")
+    with Lock():
+        release = fetch_release(config, args.version, args.tag)
+        version, manifest = download_generation(config, release)
+        say(f"パッケージを取得し、SHA-256 を照合しました: {version}")
+        precheck(version)
+        stable = config["checks"]["stable_seconds"]
+        try:
+            pkg_install(version)
+            if args.config:
+                backup = backup_config("pkg-default")
+                report = import_config(args.config, config["migrate"]["old_config_dir"])
+                for line in report["rewritten"]:
+                    say(f"  パスを置き換えました: {line}")
+                for line in report["warnings"]:
+                    say(f"  要確認（/etc/unbound 以外の絶対パス）: {line}")
+                for line in report["skipped"]:
+                    say(f"  復元しなかった項目（通常のファイル以外）: {line}")
+                try:
+                    checkconf()
+                except StepError:
+                    restore_config(backup)
+                    say("設定に問題があったため、パッケージ標準の設定に戻しました。")
+                    raise
+            else:
+                say("設定ファイルの指定がないため、パッケージ標準の設定のままにします。")
+                checkconf()
+            names = hold(manifest.get("all_packages", []))
+            say("OS 標準の unbound を自動更新の対象から外しました: " + " ".join(names))
+            say("ファイアウォール: " + firewall_open())
+            start_and_watch(stable)
+            local_check(checks_of(config))
+        except StepError as exc:
+            say(f"移行に失敗しました（{exc.stage}）。\n{exc.detail}")
+            say("初回の移行には切り戻し先がありません。原因を直してやり直すか、移行前の環境に戻してください。")
+            return 1
+        state = load_state()
+        if state.get("current") and state["current"] != version:
+            state["previous"] = state["current"]
+        state["current"] = version
+        save_state(state)
+        prune()
+        say(f"移行と確認が終わりました: {version}")
+        return 0
+
+
+def cmd_rollback(args):
+    config = load_config(need_repository=False)
+    with Lock():
+        state = load_state()
+        previous = state.get("previous")
+        if not previous:
+            raise Fatal("切り戻し先の版が、このサーバーに残っていません。")
+        current = state.get("current")
+        try:
+            pkg_install(previous)
+            checkconf()
+            start_and_watch(config["checks"]["stable_seconds"])
+        except StepError as exc:
+            say(f"切り戻しに失敗しました（{exc.stage}）。\n{exc.detail}")
+            return 1
+        state["current"], state["previous"] = previous, current
+        save_state(state)
+        say(f"切り戻しました: {previous}（設定は変更していません）")
+        return 0
+
+
+def cmd_verify(args):
+    config = load_config(need_repository=False)
+    state = load_state()
+    info = service_show()
+    say(f"導入済み: {installed_version() or 'なし'}")
+    say(f"unbound: {info.get('ActiveState', '不明')}/{info.get('SubState', '')}")
+    say(f"切り戻し先: {state.get('previous') or 'なし'}")
+    say(f"OS 標準 unbound の除外: {'あり' if state.get('hold') else 'なし'}")
+    try:
+        if info.get("ActiveState") != "active":
+            raise StepError("check", "unbound が動いていません。")
+        checkconf()
+        local_check(checks_of(config))
+    except StepError as exc:
+        say(f"確認に失敗しました（{exc.stage}）。\n{exc.detail}")
+        return 1
+    say("確認に合格しました。")
+    return 0
+
+
+def cmd_check(args):
+    config = load_config()
+    release = fetch_release(config)
+    entry, _ = select_files(config, release)
+    now = installed_version()
+    say(f"導入済み: {now or 'なし'}")
+    say(f"公開されている最新: {entry['pkg_version']}（{release['manifest']['tag']}）")
+    if now == entry["pkg_version"]:
+        say("最新です。")
+    else:
+        say(f"更新するには、次を実行してください: sudo {TOOL_NAME} update")
+    return 0
+
+
+def cmd_self_update(args):
+    config = load_config()
+    release = fetch_release(config)
+    data = http_get(f"{release['base']}/{TOOL_NAME}", 1 << 22)
+    if hashlib.sha256(data).hexdigest() != release["sums"].get(TOOL_NAME):
+        raise StepError("verify", f"{TOOL_NAME} の SHA-256 が一致しません。更新しません。")
+    if not data.startswith(b"#!/usr/bin/python3"):
+        raise StepError("verify", f"{TOOL_NAME} の内容が想定と違います。更新しません。")
+    target = args.target or os.path.realpath(__file__)
+    tmp = target + ".new"
+    with open(tmp, "wb") as handle:
+        handle.write(data)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, target)
+    say(f"{TOOL_NAME} を更新しました（{release['manifest']['tag']}）: {target}")
+    return 0
+
+
+def cmd_uninstall(args):
+    with Lock():
+        unhold()
+        closed = firewall_close()
+    say("OS 標準 unbound の除外を外しました。" + (f"この仕組みが開けた {closed} の許可も閉じました。" if closed else ""))
+    say("導入済みの unbound のパッケージと設定は、そのまま残しています。")
+    say(f"このコマンドと記録を消すには: rm -rf {ETC_DIR} {STATE_DIR} {os.path.realpath(__file__)}")
+    return 0
+
+
+def cmd_init(args):
+    if not REPO_RE.match(args.repository):
+        raise Fatal("--repository は「所有者/リポジトリ名」の形で指定してください。")
+    if os.path.exists(CONFIG_PATH):
+        raise Fatal(f"設定ファイルはすでにあります: {CONFIG_PATH}")
+    os.makedirs(ETC_DIR, mode=0o755, exist_ok=True)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as handle:
+        handle.write(CONFIG_TEMPLATE.replace("@REPOSITORY@", args.repository))
+    say(f"設定ファイルを作りました: {CONFIG_PATH}")
+    return 0
+
+
+def make_parser():
+    parser = argparse.ArgumentParser(prog=TOOL_NAME, description="Unbound のパッケージを取得し、照合して入れ替えます。")
+    sub = parser.add_subparsers(dest="command", metavar="コマンド")
+    item = sub.add_parser("update", help="公開されている版へ入れ替える（既定は最新）")
+    item.add_argument("--version", help="上流の版（例 1.26.2）")
+    item.add_argument("--tag", help="リリースのタグ（例 v1.26.2-1）")
+    item.add_argument("--force", action="store_true", help="同じ版でも入れ直す")
+    item.set_defaults(func=cmd_update)
+    sub.add_parser("check", help="導入済みの版と、公開されている最新版を表示する").set_defaults(func=cmd_check)
+    sub.add_parser("verify", help="状態と名前解決を確かめる").set_defaults(func=cmd_verify)
+    sub.add_parser("rollback", help="直前の版へ戻す（設定は変えない）").set_defaults(func=cmd_rollback)
+    item = sub.add_parser("save", help="現在の設定を 1 ファイルに保存する（旧サーバーで使う）")
+    item.add_argument("--output", required=True)
+    item.add_argument("--config-dir", default="")
+    item.set_defaults(func=cmd_save)
+    item = sub.add_parser("migrate", help="初回の導入、設定の復元、OS 標準 unbound の除外、ファイアウォール")
+    item.add_argument("--config", help="save で保存したファイル")
+    item.add_argument("--version")
+    item.add_argument("--tag")
+    item.set_defaults(func=cmd_migrate)
+    item = sub.add_parser("self-update", help="このコマンド自体を更新する")
+    item.add_argument("--target", help=argparse.SUPPRESS)
+    item.set_defaults(func=cmd_self_update)
+    sub.add_parser("uninstall", help="除外設定とファイアウォールの許可を元に戻す").set_defaults(func=cmd_uninstall)
+    item = sub.add_parser("init", help="設定ファイルを作る")
+    item.add_argument("--repository", required=True)
+    item.set_defaults(func=cmd_init)
+    return parser
+
+
+def main(argv):
+    if not argv or argv[0].startswith("--") and argv[0] not in ("-h", "--help"):
+        argv = ["update"] + argv
+    args = make_parser().parse_args(argv)
+    try:
+        if not ROOT and os.geteuid() != 0:
+            raise Fatal(f"root で実行してください: sudo {TOOL_NAME} {' '.join(argv)}")
+        return args.func(args)
+    except Fatal as exc:
+        print("エラー: " + str(exc), file=sys.stderr, flush=True)
+        return exc.code
+    except StepError as exc:
+        print(f"エラー（{exc.stage}）: {exc.detail}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
