@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -233,3 +234,74 @@ class PipelineTest(unittest.TestCase):
                 util.log(f"取得できませんでした: {WEBHOOK}")
         self.assertNotIn("VERY-SECRET-TOKEN", buffer.getvalue())
         self.assertIn("通知を送れませんでした", buffer.getvalue())
+
+
+class ChangesTest(unittest.TestCase):
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.src = self.tmp / "src"
+        self.src.mkdir()
+        self.git(self.src, "init", "-q", "-b", "main")
+        self.git(self.src, "config", "uploadpack.allowAnySHA1InWant", "true")
+        for name in ("README.md", "lib.py", "docs/usage.md"):
+            (self.src / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.src / name).write_text("a\n")
+        self.git(self.src, "add", "-A")
+        self.git(self.src, "commit", "-q", "-m", "base")
+        self.base = self.git(self.src, "rev-parse", "HEAD")
+        self.output = self.tmp / "github-output"
+        util.LOG.echo = False
+        self.addCleanup(setattr, util.LOG, "echo", True)
+
+    def change(self, branch, edit):
+        self.git(self.src, "switch", "-q", "-c", branch, self.base)
+        edit(self.src)
+        self.git(self.src, "add", "-A")
+        self.git(self.src, "commit", "-q", "-m", branch)
+        head = self.git(self.src, "rev-parse", "HEAD")
+        self.git(self.src, "switch", "-q", "main")
+        (self.src / "main.txt").write_text(branch)
+        self.git(self.src, "add", "-A")
+        self.git(self.src, "commit", "-q", "-m", f"main after {branch}")
+        return head, self.git(self.src, "rev-parse", "HEAD")
+
+    def decide(self, head, base, event="pull_request"):
+        checkout = self.tmp / f"checkout-{head[:8]}-{event}"
+        checkout.mkdir()
+        self.git(checkout, "init", "-q")
+        self.git(checkout, "remote", "add", "origin", self.src.as_uri())
+        self.git(checkout, "fetch", "-q", "--depth", "1", "origin", head)
+        self.git(checkout, "checkout", "-q", "FETCH_HEAD")
+        self.output.write_text("")
+        env = {"GITHUB_OUTPUT": str(self.output), "GITHUB_EVENT_NAME": event, "UBP_BASE_SHA": base, "UBP_HEAD_SHA": head}
+        with mock.patch.dict(os.environ, env), mock.patch.object(ci, "CODE", checkout):
+            self.assertEqual(ci.main(["changes"]), 0)
+        return self.output.read_text()
+
+    def test_documents_only_skips_build(self):
+        head, base = self.change("docs", lambda root: [(root / "README.md").write_text("b\n"), (root / "docs" / "usage.md").write_text("b\n")])
+        self.assertEqual(self.decide(head, base), "build=false\n")
+
+    def test_code_change_builds(self):
+        head, base = self.change("code", lambda root: [(root / "README.md").write_text("b\n"), (root / "lib.py").write_text("b\n")])
+        self.assertEqual(self.decide(head, base), "build=true\n")
+
+    def test_moving_code_into_docs_builds(self):
+        head, base = self.change("move", lambda root: (root / "lib.py").rename(root / "docs" / "lib.py"))
+        self.assertEqual(self.decide(head, base), "build=true\n")
+
+    def test_manual_run_or_unknown_base_builds(self):
+        head, base = self.change("docs", lambda root: (root / "README.md").write_text("b\n"))
+        self.assertEqual(self.decide(head, base, event="workflow_dispatch"), "build=true\n")
+        self.assertEqual(self.decide(head, "0" * 40), "build=true\n")
+
+    def test_document_list(self):
+        self.assertTrue(ci.documents_only(["SECURITY.md", "NOTICE.md", "CLAUDE.md", "LICENSE", "docs/maintenance.md"]))
+        self.assertFalse(ci.documents_only([]))
+        self.assertFalse(ci.documents_only(["README.md", ".github/workflows/ci.yml"]))
+        self.assertFalse(ci.documents_only(["packaging/README.md"]))
+        self.assertFalse(ci.documents_only(["docsx/a.md"]))
