@@ -16,7 +16,11 @@ def main():
     result = unittest.TextTestRunner(verbosity=1).run(suite)
     total = result.testsRun
     bad = len(result.failures) + len(result.errors)
-    print(f"自動テスト: {total} 件中 {total - bad} 件合格、{bad} 件失敗、{len(result.skipped)} 件スキップ")
+    skipped = len(result.skipped)
+    if bad == 0 and skipped == 0:
+        print(f"自動テスト: {total} 件すべて OK")
+    else:
+        print(f"自動テスト: {total} 件中 {total - bad - skipped} 件 OK、{bad} 件 NG、{skipped} 件スキップ")
     return 0 if result.wasSuccessful() else 1
 
 

@@ -182,9 +182,9 @@ def cmd_pipeline(args):
     except UbpError as exc:
         record["detail"] = str(exc)
         failure.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-        log(f"失敗しました（{record['stage']}）。\n{exc}")
+        log(f"ビルドとテスト: NG（{record['stage']}）\n{exc}")
         return 1
-    log("ビルドとテストに合格しました。")
+    log("ビルドとテスト: すべて OK")
     return 0
 
 
