@@ -20,6 +20,15 @@ class WorkflowTest(unittest.TestCase):
                 self.assertRegex(action, allowed, path.name)
         self.assertIsNone(re.search(r"(?m)^\s*-?\s*uses:", self.text("ci.yml")))
 
+    def test_maintenance_allows_exactly_the_actions_in_use(self):
+        used = set()
+        for path in WORKFLOWS.glob("*.yml"):
+            used.update(re.findall(r"(?m)^\s*-?\s*uses:\s*(\S+)\s*$", path.read_text()))
+        text = (helpers.ROOT / "docs" / "maintenance.md").read_text(encoding="utf-8")
+        listed = re.search(r"(?m)^   (actions/\S+@[0-9a-f]{40}(?:, actions/\S+@[0-9a-f]{40})*)$", text)
+        self.assertIsNotNone(listed)
+        self.assertEqual(set(listed.group(1).split(", ")), used)
+
     def test_no_dangerous_triggers(self):
         for path in WORKFLOWS.glob("*.yml"):
             text = path.read_text()

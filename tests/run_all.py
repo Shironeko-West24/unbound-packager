@@ -13,7 +13,7 @@ def main():
     suite = unittest.TestSuite()
     for sub in ("unit", "integration"):
         suite.addTests(loader.discover(os.path.join(HERE, sub), pattern="test_*.py", top_level_dir=HERE))
-    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    result = unittest.TextTestRunner(verbosity=1, buffer=True).run(suite)
     total = result.testsRun
     bad = len(result.failures) + len(result.errors)
     skipped = len(result.skipped)

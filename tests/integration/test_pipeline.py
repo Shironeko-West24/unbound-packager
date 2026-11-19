@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -15,6 +17,12 @@ WEBHOOK = "https://discord.example/api/webhooks/123/VERY-SECRET-TOKEN"
 
 
 class PipelineTest(unittest.TestCase):
+    def run_quietly(self, args):
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            code = ci.main(args)
+        return code, buffer.getvalue()
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -140,10 +148,14 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(signing.verify(key["public"], str(self.work / "release" / "SHA256SUMS"), str(signature)))
         with mock.patch.dict(os.environ, {"RELEASE_SIGNING_KEY": ""}), \
                 mock.patch.object(signing, "public_key", lambda code: key["public"]):
-            self.assertEqual(ci.main(["sign"]), 1)
+            code, errors = self.run_quietly(["sign"])
+        self.assertEqual(code, 1)
+        self.assertIn("エラー: シークレット RELEASE_SIGNING_KEY がないため、リリースに署名できません。", errors)
 
     def test_publish_without_pipeline_result_fails(self):
-        self.assertEqual(ci.main(["publish"]), 1)
+        code, errors = self.run_quietly(["publish"])
+        self.assertEqual(code, 1)
+        self.assertIn("エラー: 公開する内容がありません。", errors)
         self.assertEqual(self.calls("gh"), [])
 
     def test_failure_is_recorded_notified_and_gives_up_at_three(self):
@@ -208,9 +220,6 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(api.enable_workflow.call_count, 2)
 
     def test_github_token_is_masked_in_logs(self):
-        import contextlib
-        import io
-
         ci.github()
         buffer = io.StringIO()
         util.LOG.echo = True
@@ -220,9 +229,6 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("［秘密］", buffer.getvalue())
 
     def test_secrets_are_not_printed(self):
-        import contextlib
-        import io
-
         def boom(inner, url, payload):
             raise RuntimeError(f"cannot reach {url}")
 
