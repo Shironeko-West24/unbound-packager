@@ -56,11 +56,18 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 ### Actions の設定を確かめる
 
-目的: 外部の人のプルリクエストが、勝手にワークフローを動かさないようにする。
+目的: 外部の人のプルリクエストが、勝手にワークフローを動かさないようにする。`release` が使うアクションを、必要な 2 つだけ許可する。
 
 1. 「Settings」→「Actions」→「General」を開きます。
 2. フォークからのプルリクエストのワークフローについて、外部の貢献者すべてに承認を求める設定を選びます。
 3. ワークフローの権限の既定を、読み取り専用にします。
+4. 「Actions permissions」で、自分のアカウントのアクションだけを許可する設定（「Allow（アカウント名）, and select non-（アカウント名）, actions and reusable workflows」）を選んでいる場合は、「Allow or block specified actions and reusable workflows」に次の 1 行を書き、「Save」を押します。書かないと、`release` が「not allowed」というエラーで止まります。
+
+   ```
+   actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9, actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+   ```
+
+   「Allow actions created by GitHub」にはチェックを入れません。GitHub が作ったアクションすべてが使えるようになるためです。戻すには、この 1 行を消して「Save」を押します（`release` は動かなくなります）。
 
 `ci` ワークフローは、フォークからのプルリクエストでは動かない条件を自分でも持っています。シークレットは、フォークから起動されたワークフローには渡りません。
 
@@ -136,6 +143,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 | `release` が「パッチ … は … 当て直せませんでした」で失敗する | OS 側のパッチが新しい版と衝突しています。人の判断が必要です。原因を調べ、パッチの扱いを直します |
 | `release` が「サブパッケージが欠けています」で失敗する | 上流か OS 側のパッケージングが変わっています。同上 |
 | `release` が「パッケージングのライセンスが想定と違います」で失敗する | OS 側のライセンスの表記が変わっています。公開してよい条件かを確かめてから、許可リストを見直します |
+| `release` が「The actions … are not allowed in …」で止まる | リポジトリの設定で、`release` が使うアクションが許可されていません。「Actions の設定を確かめる」の 4 の 1 行を設定します |
 | `release` が「シークレット RELEASE_SIGNING_KEY がないため、リリースに署名できません」で失敗する | シークレットを登録します（「リリースの署名鍵を登録する」） |
 | `release` が「署名を、リポジトリの公開鍵（…）で確かめられませんでした」で失敗する | シークレットの秘密鍵と、`packaging/keys/release-signing.pub` の公開鍵が対応していません。どちらかを直します |
 | 通知が届かない | シークレット `DISCORD_WEBHOOK_URL` を確かめます。毎月 1 日の通知も届かなければ、定期実行が無効になっています |
@@ -147,7 +155,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 - 二重実行はロックファイルで防ぐ。
 - ある OS のパッケージがそろっていない版は、公開しない。
 - ワークフローの `run:` の中に `${{ }}` を直接書かない（`env:` で渡す）。
-- 外部のアクションは、`actions/upload-artifact` と `actions/download-artifact` をコミットの SHA で固定して使うものだけにする。
+- 外部のアクションは、`actions/upload-artifact` と `actions/download-artifact` をコミットの SHA で固定して使うものだけにする。SHA を変えたときは、「Actions の設定を確かめる」の許可の 1 行も同じ SHA に直し、リポジトリの設定も書き換える。
 - ビルドとテストのジョブには、書き込みの権限、トークン、シークレットを渡さない。
 
 変更はプルリクエストで出します。`ci` ワークフローが、自動テスト、実ビルド、パッケージのテスト、`unbound-update` の実地テストを行います。
