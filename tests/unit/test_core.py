@@ -197,7 +197,7 @@ class ReleaseTest(unittest.TestCase):
             helpers.make_out(self.tmp, "1.26.2", 1, os_name)
         target, combined = release.assemble(helpers.ROOT, self.tmp, "1.26.2", 1)
         text = release.notes(combined, "o/r")
-        for needed in ("非公式ビルド", "NOTICE.md", "ソースパッケージ", "| `a.patch` | 除外 | 上流に取り込み済み |", "/usr/share/new", "sudo unbound-update update --version 1.26.2"):
+        for needed in ("非公式ビルド", "NOTICE.md", "ソースパッケージ", "| `a.patch` | × | 上流に取り込み済み |", "| Rocky Linux 10 |", "1 件中 0 件を適用", "## OS のパッチ", "/usr/share/new", "sudo unbound-update update --version 1.26.2"):
             self.assertIn(needed, text)
         self.assertNotIn("drop", text)
         calls = []

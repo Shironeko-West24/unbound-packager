@@ -72,21 +72,30 @@ def assemble(code, work, version, revision):
     return target, combined
 
 
+OS_LABELS = {"rocky10": "Rocky Linux 10", "ubuntu2604": "Ubuntu 26.04"}
+
+
+def os_label(os_name):
+    return OS_LABELS.get(os_name, os_name)
+
+
+def patch_count(entry):
+    applied = sum(1 for patch in entry["patches"] if patch["action"] in ("adopt", "rebased"))
+    return f"{len(entry['patches'])} 件中 {applied} 件を適用"
+
+
 def summary(combined):
     lines = []
     unpackaged = []
     for os_name, entry in combined["os"].items():
-        counts = {}
-        for patch in entry["patches"]:
-            counts[patch["action"]] = counts.get(patch["action"], 0) + 1
-        patch_text = f"採用 {counts.get('adopt', 0)}、当て直し {counts.get('rebased', 0)}、除外 {counts.get('drop', 0)}"
-        lines.append(f"{os_name}: {entry['pkg_version']}（パッケージ {len(entry['files'])} 個、パッチ {patch_text}）")
-        unpackaged += [f"{os_name}: {item}" for item in entry["unpackaged"]]
+        label = os_label(os_name)
+        lines.append(f"{label}: {entry['pkg_version']}（パッケージ {len(entry['files'])} 個、OS のパッチ {patch_count(entry)}）")
+        unpackaged += [f"{label}: {item}" for item in entry["unpackaged"]]
     return "\n".join(lines), unpackaged
 
 
 def notes(combined, repository):
-    text, unpackaged = summary(combined)
+    unpackaged = summary(combined)[1]
     out = [
         f"Unbound {combined['upstream']} の非公式ビルドです（ビルド {combined['revision']}）。",
         "",
@@ -95,20 +104,25 @@ def notes(combined, repository):
         "",
         "## 内容",
         "",
-        "```",
-        text,
-        "```",
+        "| OS | パッケージの版 | パッケージの数 | OS のパッチ |",
+        "| --- | --- | --- | --- |",
+    ]
+    for os_name, entry in combined["os"].items():
+        out.append(f"| {os_label(os_name)} | {entry['pkg_version']} | {len(entry['files'])} | {patch_count(entry)} |")
+    out += [
         "",
-        "## パッチの判定",
+        "## OS のパッチ",
+        "",
+        "各 OS の Unbound のパッケージに含まれるパッチを、このビルドに当てたか（○）、当てなかったか（×）と、その理由です。",
         "",
     ]
     for os_name, entry in combined["os"].items():
-        out.append(f"### {os_name}（OS のソースパッケージ: {entry.get('distro_source') or '不明'}）")
+        out.append(f"### {os_label(os_name)}（元にした OS のパッケージ: {entry.get('distro_source') or '不明'}）")
         out.append("")
         if not entry["patches"]:
             out.append("パッチはありません。")
         else:
-            out += ["| パッチ | 判定 | 理由 |", "| --- | --- | --- |"]
+            out += ["| パッチ | 適用 | 理由 |", "| --- | --- | --- |"]
         for patch in entry["patches"]:
             out.append(f"| `{patch['name']}` | {ACTION_LABELS.get(patch['action'], patch['action'])} | {patch['reason']} |")
         out.append("")
