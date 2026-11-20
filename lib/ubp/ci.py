@@ -76,7 +76,7 @@ def decide(requested, rebuild, manual, tags, attempts, maximum, latest):
         return {"version": version, "revision": revs[-1], "needed": False, "reason": "公開済み"}
     if attempts >= maximum and not manual:
         return {"version": version, "revision": 1, "needed": False, "reason": f"{maximum} 回失敗したため、自動では試さない"}
-    return {"version": version, "revision": 1, "needed": True, "reason": "未公開の版"}
+    return {"version": version, "revision": 1, "needed": True, "reason": "未公開のバージョン"}
 
 
 def cmd_detect(args):
@@ -89,7 +89,7 @@ def cmd_detect(args):
         requested, env("INPUT_REBUILD") == "true", env("GITHUB_EVENT_NAME") == "workflow_dispatch",
         tags, attempts, options()["max_attempts"], latest,
     )
-    log(f"上流の版: {result['version']}（{result['reason']}）")
+    log(f"上流のバージョン: {result['version']}（{result['reason']}）")
     published = sorted((p for p in map(release.parse_tag, tags) if p), key=lambda p: (versions.parse(p[0]), p[1]))
     output(
         version=result["version"], revision=result["revision"], needed=result["needed"],
@@ -225,7 +225,7 @@ def cmd_on_success(args):
     repository = env("GITHUB_REPOSITORY")
     url = f"{env('GITHUB_SERVER_URL', 'https://github.com')}/{repository}/releases/tag/{combined['tag']}"
     try:
-        github().close_failure(version, f"版 {version} のビルドとテストに合格し、公開しました（{combined['tag']}）。")
+        github().close_failure(version, f"バージョン {version} のビルドとテストに合格し、公開しました（{combined['tag']}）。")
     except UbpError as exc:
         log(str(exc))
     text, unpackaged = release.summary(combined)

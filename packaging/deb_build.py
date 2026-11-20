@@ -31,7 +31,7 @@ def main():
     c.say(f"OS のソースパッケージ: {old_full}（{distribution}）")
     old_orig = [p for p in glob.glob(os.path.join(DEB, "unbound_*.orig.tar.*")) if not p.endswith((".asc", ".sig"))]
     if len(old_orig) != 1:
-        c.fail("旧版の orig.tar が 1 つに決まりません。")
+        c.fail("旧バージョンの orig.tar が 1 つに決まりません。")
     new_tar = os.path.join(c.IN, f"unbound-{args.version}.tar.gz")
     c.extract_stripped(old_orig[0], "/work/tree/old")
     c.extract_stripped(new_tar, "/work/tree/new")

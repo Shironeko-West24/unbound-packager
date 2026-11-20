@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "上流の版（空なら最新）"
+        description: "上流のバージョン（空なら最新）"
         required: false
         default: ""
       rebuild:
-        description: "公開済みの版を、ビルド番号を上げて作り直す"
+        description: "公開済みのバージョンを、ビルド番号を上げて作り直す"
         type: boolean
         default: false
 
@@ -40,7 +40,7 @@ jobs:
           git fetch -q --depth 1 origin "${GITHUB_SHA}"
           git checkout -q FETCH_HEAD
 
-      - name: 新版の検知
+      - name: 新しいバージョンの検知
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}

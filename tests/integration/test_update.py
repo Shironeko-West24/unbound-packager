@@ -45,7 +45,7 @@ class UpdateTest(helpers.Sandbox):
         self.clear_calls()
         rc, out = self.tool("update")
         self.assertEqual(rc, 0)
-        self.assertIn("すでに対象の版です", out)
+        self.assertIn("すでに対象のバージョンです", out)
         self.assertEqual([c for c in self.calls("dnf") if "install" in c["args"]], [])
 
     def test_start_failure_rolls_back(self):

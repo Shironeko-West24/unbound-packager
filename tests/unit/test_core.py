@@ -52,7 +52,7 @@ class DecideTest(unittest.TestCase):
         return ci.decide(**base)
 
     def test_new_version_is_built(self):
-        self.assertEqual(self.decide(tags=["v1.26.1-1"]), {"version": "1.26.2", "revision": 1, "needed": True, "reason": "未公開の版"})
+        self.assertEqual(self.decide(tags=["v1.26.1-1"]), {"version": "1.26.2", "revision": 1, "needed": True, "reason": "未公開のバージョン"})
 
     def test_published_version_is_skipped(self):
         result = self.decide(tags=["v1.26.2-1"])
@@ -128,7 +128,7 @@ class GitHubTest(unittest.TestCase):
         self.assertEqual(self.gh.attempts("1.26.2"), 0)
         self.assertEqual(self.gh.record_failure("1.26.2", "一回目"), 1)
         self.assertEqual(self.gh.record_failure("1.26.2", "二回目"), 2)
-        self.assertEqual(self.gh.record_failure("1.26.3", "別の版"), 1)
+        self.assertEqual(self.gh.record_failure("1.26.3", "別のバージョン"), 1)
         self.assertEqual(len(self.api.issues), 2)
         self.assertEqual(self.api.issues[0]["title"], ISSUE_PREFIX + "1.26.2")
 
