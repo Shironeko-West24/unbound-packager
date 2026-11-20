@@ -97,7 +97,7 @@ def summary(combined):
 def notes(combined, repository):
     unpackaged = summary(combined)[1]
     out = [
-        f"Unbound {combined['upstream']} の非公式ビルドです（ビルド {combined['revision']}）。",
+        f"Unbound {combined['upstream']} の非公式ビルドです。",
         "",
         "NLnet Labs、Rocky Enterprise Software Foundation、Red Hat、Canonical、Debian のいずれとも関係のない、個人によるビルドです。",
         "出どころとライセンスは NOTICE.md にあります。ソースパッケージ（SRPM と deb のソース一式）も、このリリースに含まれています。",

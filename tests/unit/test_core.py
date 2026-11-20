@@ -200,6 +200,7 @@ class ReleaseTest(unittest.TestCase):
         for needed in ("非公式ビルド", "NOTICE.md", "ソースパッケージ", "| `a.patch` | × | 上流に取り込み済み |", "| Rocky Linux 10 |", "1 件中 0 件を適用", "## OS のパッチ", "/usr/share/new", "sudo unbound-update update --version 1.26.2"):
             self.assertIn(needed, text)
         self.assertNotIn("drop", text)
+        self.assertTrue(text.startswith("Unbound 1.26.2 の非公式ビルドです。\n"))
         calls = []
         with self.assertRaises(UbpError) as caught:
             release.publish(target, combined, "o/r", "abc123", gh=lambda cmd, **kw: calls.append(cmd))
