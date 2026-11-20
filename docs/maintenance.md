@@ -7,7 +7,7 @@
 ```
 .github/workflows/release.yml   手動実行（定期実行は任意で追加）。検知、ビルド、テスト、署名、公開、通知
 .github/workflows/ci.yml        プルリクエスト用。自動テスト、ビルド、テスト（公開しない）
-lib/ubp/                        版番号、パッチの判定、spec と debian の書き換え、署名の検証、リリースの署名、通知、公開
+lib/ubp/                        バージョン番号、パッチの判定、spec と debian の書き換え、署名の検証、リリースの署名、通知、公開
 packaging/                      統一オプション（options.json）、rpm と deb の作成、コンテナ内テスト
 packaging/keys/                 NLnet Labs のリリース署名鍵 G2、このリポジトリのリリース署名の公開鍵
 containers/                     ビルド用とテスト用のコンテナの定義
@@ -21,7 +21,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 | ジョブ | 行うこと | 権限 | 受け取るシークレット |
 | --- | --- | --- | --- |
-| `detect` | 上流の新版の検知 | `contents: read`、`issues: read` | 通知のステップだけが `DISCORD_WEBHOOK_URL` |
+| `detect` | 上流の新しいバージョンの検知 | `contents: read`、`issues: read` | 通知のステップだけが `DISCORD_WEBHOOK_URL` |
 | `build` | 自動テスト、ビルド、パッケージのテスト。成果物を Actions の成果物として保存 | `contents: read` | なし（トークンも渡しません） |
 | `publish` | 成果物の取得、`SHA256SUMS` への署名、リリースの公開 | `contents: write` | 署名のステップだけが `RELEASE_SIGNING_KEY` |
 | `record` | 成功または失敗の記録（Issue）と通知 | `contents: read`、`issues: write` | 通知のステップだけが `DISCORD_WEBHOOK_URL` |
@@ -31,10 +31,10 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 ## 流れ
 
-1. `release` ワークフローが、上流の版を調べます。最初は手動で実行します。定期実行は、ワークフローに追加するまで動きません（「定期実行を有効にする」）。
-2. 新版があれば、両 OS のパッケージをコンテナでビルドし、テストします。
+1. `release` ワークフローが、上流のバージョンを調べます。最初は手動で実行します。定期実行は、ワークフローに追加するまで動きません（「定期実行を有効にする」）。
+2. 新しいバージョンがあれば、両 OS のパッケージをコンテナでビルドし、テストします。
 3. 両方に合格したら、`SHA256SUMS` に署名し、リリースとして公開して、Discord に通知します。
-4. ビルドやテストに失敗したら、「ビルド失敗: Unbound 版」という題の Issue に記録し、次の実行でもう一度試します。3 回失敗したら、自動の再試行をやめます。
+4. ビルドやテストに失敗したら、「ビルド失敗: Unbound 1.26.2」のような題の Issue に記録し、次の実行でもう一度試します。3 回失敗したら、自動の再試行をやめます。
 
 ## 注意事項
 
@@ -67,7 +67,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
    actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9, actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
    ```
 
-   1 行は、ワークフローと同じコミットの SHA で書きます。`actions/upload-artifact@*` のように書くと、どの版でも使えるようになります。「Allow actions created by GitHub」にはチェックを入れません。GitHub が作ったアクションすべてが使えるようになるためです。戻すには、「Allow（アカウント名） actions and reusable workflows」を選び直して「Save」を押します（`release` は動かなくなります）。
+   1 行は、ワークフローと同じコミットの SHA で書きます。`actions/upload-artifact@*` のように書くと、どのバージョンでも使えるようになります。「Allow actions created by GitHub」にはチェックを入れません。GitHub が作ったアクションすべてが使えるようになるためです。戻すには、「Allow（アカウント名） actions and reusable workflows」を選び直して「Save」を押します（`release` は動かなくなります）。
 
 `ci` ワークフローは、フォークからのプルリクエストでは動かない条件を自分でも持っています。シークレットは、フォークから起動されたワークフローには渡りません。
 
@@ -110,7 +110,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 1. リポジトリの「Actions」→「release」→「Run workflow」を開き、そのまま実行します。
 2. 終わると、「Releases」に `v1.26.2-1` のようなタグのリリースができ、Discord に通知が届きます。
-3. 失敗した場合は、「ビルド失敗: Unbound 版」という題の Issue ができます。Issue に書かれた実行の記録を見て、原因を調べます。
+3. 失敗した場合は、「ビルド失敗: Unbound 1.26.2」のような題の Issue ができます。Issue に書かれた実行の記録を見て、原因を調べます。
 
 ### 定期実行を有効にする
 
@@ -127,8 +127,8 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 | したいこと | 方法 |
 | --- | --- |
-| 同じ版を作り直す（OS 側の修正を取り込む） | 「Actions」→「release」→「Run workflow」で、版を入れ、作り直しにチェックを入れる |
-| 版を指定してビルドする | 同じ画面で、版だけを入れる |
+| 同じバージョンを作り直す（OS 側の修正を取り込む） | 「Actions」→「release」→「Run workflow」で、バージョンを入れ、作り直しにチェックを入れる |
+| バージョンを指定してビルドする | 同じ画面で、バージョンだけを入れる |
 | 定期実行を止める | 「定期実行を有効にする」を参照 |
 
 - 作り直すと、ビルド番号が上がります（`v1.26.2-2`、rpm は `2.local`、deb は `+local2`）。
@@ -140,7 +140,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 
 | 症状 | 原因と対処 |
 | --- | --- |
-| `release` が「パッチ … は … 当て直せませんでした」で失敗する | OS 側のパッチが新しい版と衝突しています。人の判断が必要です。原因を調べ、パッチの扱いを直します |
+| `release` が「パッチ … は … 当て直せませんでした」で失敗する | OS 側のパッチが新しいバージョンと衝突しています。人の判断が必要です。原因を調べ、パッチの扱いを直します |
 | `release` が「サブパッケージが欠けています」で失敗する | 上流か OS 側のパッケージングが変わっています。同上 |
 | `release` が「パッケージングのライセンスが想定と違います」で失敗する | OS 側のライセンスの表記が変わっています。公開してよい条件かを確かめてから、許可リストを見直します |
 | `release` が「The actions … are not allowed in …」で止まる | リポジトリの設定で、`release` が使うアクションが許可されていません。「Actions の設定を確かめる」の 4 のとおりに設定します |
@@ -153,7 +153,7 @@ tests/                          自動テスト（python3 -I tests/run_all.py）
 - 処理は Python で書き、`-I` で動かす。モジュール名を標準ライブラリと重ねない。
 - tar を展開するときは、`./` を取り除き、`..` と絶対パスを拒否する。
 - 二重実行はロックファイルで防ぐ。
-- ある OS のパッケージがそろっていない版は、公開しない。
+- ある OS のパッケージがそろっていないバージョンは、公開しない。
 - ワークフローの `run:` の中に `${{ }}` を直接書かない（`env:` で渡す）。
 - 外部のアクションは、`actions/upload-artifact` と `actions/download-artifact` をコミットの SHA で固定して使うものだけにする。SHA を変えたときは、「Actions の設定を確かめる」の許可の 1 行も同じ SHA に直し、リポジトリの設定も書き換える。
 - ビルドとテストのジョブには、書き込みの権限、トークン、シークレットを渡さない。
