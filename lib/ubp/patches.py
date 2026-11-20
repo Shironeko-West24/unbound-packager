@@ -23,7 +23,7 @@ class PatchError(UbpError):
     pass
 
 
-ACTION_LABELS = {"adopt": "採用", "rebased": "当て直して採用", "drop": "除外"}
+ACTION_LABELS = {"adopt": "○", "rebased": "○", "drop": "×"}
 ACTION_VERBS = {"adopt": "を採用しました", "rebased": "を当て直して採用しました", "drop": "を除外しました"}
 
 
@@ -189,34 +189,34 @@ def decide(patches, old_tree, new_tree, new_version, drop_globs, workdir, commit
 def _decide_one(name, path, text, old_cur, new_cur, new_version, drop_globs, workdir, changelog, commit_checker, strip=1, advisory=None):
     for glob in drop_globs:
         if fnmatch.fnmatch(name, glob):
-            return Decision(name, "drop", f"統一方針で採用しないパッチです（`{glob}` に一致）。")
+            return Decision(name, "drop", f"このビルドでは適用しない種類のパッチ（`{glob}` に該当）")
     cves, commits = references(name, text)
     if cves and all(cve in changelog for cve in cves):
-        return Decision(name, "drop", f"{'、'.join(cves)} の修正は、上流 {new_version} の Changelog に記載されています。")
+        return Decision(name, "drop", f"{'、'.join(cves)} の修正は Unbound {new_version} に含まれる（Changelog に記載）")
     if cves and advisory:
         last = [advisory(cve) for cve in cves]
         if all(last) and all(_version(item) < _version(new_version) for item in last):
             detail = "、".join(f"{cve} の影響は {item} まで" for cve, item in zip(cves, last))
-            return Decision(name, "drop", f"NLnet Labs の告知では、{detail}で、{new_version} は影響を受けません。")
+            return Decision(name, "drop", f"NLnet Labs の告知では、{detail}で、{new_version} は影響を受けない")
     if commit_checker:
         for commit in commits:
             if commit_checker(commit, new_version):
-                return Decision(name, "drop", f"上流のコミット {commit[:12]} は {new_version} に含まれています。")
+                return Decision(name, "drop", f"この修正（Unbound のコミット {commit[:12]}）は、Unbound {new_version} に含まれる")
     if applies_reversed(new_cur, path, strip):
-        return Decision(name, "drop", "新しい版にすでに取り込まれています（逆向きに当てられることで確認しました）。")
+        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（ソースにパッチの変更があることを確認）")
     if applies(new_cur, path, strip):
         apply(new_cur, path, strip=strip)
-        return Decision(name, "adopt", "新しい版にそのまま当てられます。")
+        return Decision(name, "adopt", "そのまま適用")
     out_path = os.path.join(workdir, "rebased-" + name)
     result = three_way(old_cur, new_cur, path, workdir, out_path, strip)
     if result is None:
-        return Decision(name, "drop", "当て直すと差分がなくなるため、新しい版にすでに取り込まれています。")
+        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（{new_version} 用に修正すると変更が残らないことで確認）")
     if result is False:
         raise PatchError(
             f"パッチ {name} は、そのままでも逆向きでも当たらず、3-way merge でも当て直せませんでした。人の判断が必要です。"
         )
     apply(new_cur, out_path, strip=strip)
-    return Decision(name, "rebased", "元のパッチを、3-way マージで新しい版に合わせました。", new_path=out_path)
+    return Decision(name, "rebased", f"Unbound {new_version} 用に修正してから適用", new_path=out_path)
 
 
 def _version(text):

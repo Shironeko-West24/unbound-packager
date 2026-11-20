@@ -12,7 +12,7 @@
 | --- | --- |
 | Rocky Linux 10 | OS 標準の unbound と同じ構成の rpm 一式（ライブラリ、Python バインディング、開発用ヘッダ、unbound-anchor などを含む）と SRPM |
 | Ubuntu 26.04 | OS 標準の unbound と同じ構成の deb 一式と、ソースパッケージ |
-| 共通 | `SHA256SUMS` とその署名 `SHA256SUMS.sig`、`manifest.json`（パッチの判定結果を含む）、更新用のコマンド `unbound-update` |
+| 共通 | `SHA256SUMS` とその署名 `SHA256SUMS.sig`、`manifest.json`（OS のパッチを当てたかどうかと、その理由を含む）、更新用のコマンド `unbound-update` |
 
 ## 特徴
 
