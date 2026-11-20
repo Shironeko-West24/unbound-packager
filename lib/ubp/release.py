@@ -104,7 +104,7 @@ def notes(combined, repository):
         "",
         "## 内容",
         "",
-        "| OS | パッケージの版 | パッケージの数 | OS のパッチ |",
+        "| OS | パッケージのバージョン | パッケージの数 | OS のパッチ |",
         "| --- | --- | --- | --- |",
     ]
     for os_name, entry in combined["os"].items():
