@@ -113,7 +113,7 @@ def notes(combined, repository):
         "",
         "## OS のパッチ",
         "",
-        "各 OS の Unbound のパッケージに含まれるパッチを、このビルドに当てたか（○）、当てなかったか（×）と、その理由です。",
+        "各 OS の Unbound のパッケージに含まれるパッチについて、このビルドに適用した（○）か適用しなかった（×）かと、その理由を示します。",
         "",
     ]
     for os_name, entry in combined["os"].items():

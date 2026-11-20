@@ -189,34 +189,34 @@ def decide(patches, old_tree, new_tree, new_version, drop_globs, workdir, commit
 def _decide_one(name, path, text, old_cur, new_cur, new_version, drop_globs, workdir, changelog, commit_checker, strip=1, advisory=None):
     for glob in drop_globs:
         if fnmatch.fnmatch(name, glob):
-            return Decision(name, "drop", f"このビルドでは当てない種類のパッチです（`{glob}` に該当）。")
+            return Decision(name, "drop", f"このビルドでは適用しない種類のパッチ（`{glob}` に該当）")
     cves, commits = references(name, text)
     if cves and all(cve in changelog for cve in cves):
-        return Decision(name, "drop", f"{'、'.join(cves)} の修正は、Unbound {new_version} に含まれています（Changelog に記載）。")
+        return Decision(name, "drop", f"{'、'.join(cves)} の修正は Unbound {new_version} に含まれる（Changelog に記載）")
     if cves and advisory:
         last = [advisory(cve) for cve in cves]
         if all(last) and all(_version(item) < _version(new_version) for item in last):
             detail = "、".join(f"{cve} の影響は {item} まで" for cve, item in zip(cves, last))
-            return Decision(name, "drop", f"NLnet Labs の告知では、{detail}で、{new_version} は影響を受けません。")
+            return Decision(name, "drop", f"NLnet Labs の告知では、{detail}で、{new_version} は影響を受けない")
     if commit_checker:
         for commit in commits:
             if commit_checker(commit, new_version):
-                return Decision(name, "drop", f"この修正（Unbound のコミット {commit[:12]}）は、Unbound {new_version} に含まれています。")
+                return Decision(name, "drop", f"この修正（Unbound のコミット {commit[:12]}）は、Unbound {new_version} に含まれる")
     if applies_reversed(new_cur, path, strip):
-        return Decision(name, "drop", f"この修正は、Unbound {new_version} にすでに含まれています（パッチを逆向きに当てられることで確認）。")
+        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（パッチを逆向きに適用できることで確認）")
     if applies(new_cur, path, strip):
         apply(new_cur, path, strip=strip)
-        return Decision(name, "adopt", "そのまま当てました。")
+        return Decision(name, "adopt", "そのまま適用")
     out_path = os.path.join(workdir, "rebased-" + name)
     result = three_way(old_cur, new_cur, path, workdir, out_path, strip)
     if result is None:
-        return Decision(name, "drop", f"この修正は、Unbound {new_version} にすでに含まれています（新しい版に合わせると変更が残らないことで確認）。")
+        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（{new_version} 用に修正すると変更が残らないことで確認）")
     if result is False:
         raise PatchError(
             f"パッチ {name} は、そのままでも逆向きでも当たらず、3-way merge でも当て直せませんでした。人の判断が必要です。"
         )
     apply(new_cur, out_path, strip=strip)
-    return Decision(name, "rebased", f"Unbound {new_version} に合わせて直してから、当てました。", new_path=out_path)
+    return Decision(name, "rebased", f"Unbound {new_version} 用に修正してから適用", new_path=out_path)
 
 
 def _version(text):

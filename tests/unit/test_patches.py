@@ -58,7 +58,7 @@ class PatchDecisionTest(unittest.TestCase):
 
     def test_drop_by_policy(self):
         decision = self.decide({}, {"a.c": OLD["a.c"].replace("five", "FIVE")}, name="unbound-system-tls.patch")
-        self.assertEqual((decision.action, "このビルドでは当てない種類のパッチ" in decision.reason), ("drop", True))
+        self.assertEqual((decision.action, "このビルドでは適用しない種類のパッチ" in decision.reason), ("drop", True))
 
     def test_drop_when_cve_in_changelog(self):
         decision = self.decide(
