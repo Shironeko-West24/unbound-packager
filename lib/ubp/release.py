@@ -150,7 +150,7 @@ def publish(target, combined, repository, sha, gh=run):
     files = [os.path.join(target, name) for name in sorted(os.listdir(target))]
     gh([
         "gh", "release", "create", tag, "--repo", repository, "--target", sha,
-        "--title", f"Unbound {combined['upstream']}（ビルド {combined['revision']}）",
+        "--title", f"Unbound {combined['upstream']} (build {combined['revision']})",
         "--notes-file", notes_path, *files,
     ])
     return tag

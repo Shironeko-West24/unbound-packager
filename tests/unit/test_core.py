@@ -210,6 +210,7 @@ class ReleaseTest(unittest.TestCase):
         cmd = calls[0]
         self.assertEqual(cmd[:4], ["gh", "release", "create", "v1.26.2-1"])
         self.assertIn("abc123", cmd)
+        self.assertEqual(cmd[cmd.index("--title") + 1], "Unbound 1.26.2 (build 1)")
         self.assertTrue(any(arg.endswith("SHA256SUMS") for arg in cmd))
         self.assertTrue(any(arg.endswith("SHA256SUMS.sig") for arg in cmd))
         self.assertEqual(len(calls), 1)
