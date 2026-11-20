@@ -6,7 +6,7 @@ DNS サーバーにパッケージを導入し、更新するための手順で�
 
 ## 導入
 
-署名を確かめるため、`ssh-keygen` が必要です。Rocky Linux では openssh-clients、Ubuntu では openssh-client に含まれます（多くの環境では最初から入っています）。
+署名を確かめるため、`ssh-keygen` が必要です。Rocky Linux では openssh（openssh-clients を入れると一緒に入ります）、Ubuntu では openssh-client に含まれます（多くの環境では最初から入っています）。
 
 ```
 cd ~
