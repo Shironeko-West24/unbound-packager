@@ -203,7 +203,7 @@ def _decide_one(name, path, text, old_cur, new_cur, new_version, drop_globs, wor
             if commit_checker(commit, new_version):
                 return Decision(name, "drop", f"この修正（Unbound のコミット {commit[:12]}）は、Unbound {new_version} に含まれる")
     if applies_reversed(new_cur, path, strip):
-        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（パッチを逆向きに適用できることで確認）")
+        return Decision(name, "drop", f"この修正は Unbound {new_version} にすでに含まれる（ソースにパッチの変更があることを確認）")
     if applies(new_cur, path, strip):
         apply(new_cur, path, strip=strip)
         return Decision(name, "adopt", "そのまま適用")
