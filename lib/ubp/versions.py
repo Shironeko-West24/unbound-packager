@@ -10,7 +10,7 @@ DIST_RE = re.compile(r"\.(el\d+(?:_\d+)?)")
 def parse(version):
     match = VERSION_RE.match(version or "")
     if not match:
-        raise UbpError(f"版番号の形式が正しくありません（例 1.26.2）: {version}")
+        raise UbpError(f"バージョン番号の形式が正しくありません（例 1.26.2）: {version}")
     return tuple(int(part) for part in match.groups())
 
 

@@ -49,12 +49,12 @@ class Notifier:
 
 
 def new_version(version, run_url):
-    return ("info", f"Unbound の新しい版 {version} を検知しました", f"ビルドとテストを始めます。\n{run_url}")
+    return ("info", f"Unbound の新しいバージョン {version} を検知しました", f"ビルドとテストを始めます。\n{run_url}")
 
 
 def released(version, tag, summary, unpackaged, release_url):
     body = (
-        f"版 {version} のビルドとテストに合格し、公開しました（{tag}）。\n\n{summary}\n\n"
+        f"バージョン {version} のビルドとテストに合格し、公開しました（{tag}）。\n\n{summary}\n\n"
         "更新するには、各 DNS サーバーで次を実行してください（1 台で確かめてから、残りへ進めます）。\n"
         f"```\nsudo unbound-update update --version {version}\n```\n{release_url}"
     )
@@ -78,7 +78,7 @@ def gave_up(version, max_attempts):
     return (
         "warning",
         f"Unbound {version} の自動の再試行を終了しました",
-        f"{max_attempts} 回失敗しました。次の新しい版が出るか、手動で実行するまで、自動では試しません。",
+        f"{max_attempts} 回失敗しました。次の新しいバージョンが出るか、手動で実行するまで、自動では試しません。",
     )
 
 
@@ -86,5 +86,5 @@ def heartbeat(upstream, published):
     return (
         "info",
         "定期実行は動いています（月次の確認）",
-        f"上流の最新版: {upstream}\n公開済みの最新: {published or 'なし'}\nこの通知が毎月 1 日に届かなければ、定期実行が止まっています。",
+        f"上流の最新バージョン: {upstream}\n公開済みの最新: {published or 'なし'}\nこの通知が毎月 1 日に届かなければ、定期実行が止まっています。",
     )

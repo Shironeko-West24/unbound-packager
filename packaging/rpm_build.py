@@ -52,7 +52,7 @@ def main():
     except Exception as exc:
         c.fail(str(exc))
     cands = [p for p in glob.glob(os.path.join(sources, f"unbound-{old_version}.tar.*")) if not p.endswith((".asc", ".sig"))]
-    old_tar = cands[0] if len(cands) == 1 else c.fail("旧版のソースが 1 つに決まりません。")
+    old_tar = cands[0] if len(cands) == 1 else c.fail("旧バージョンのソースが 1 つに決まりません。")
     new_tar = os.path.join(c.IN, f"unbound-{args.version}.tar.gz")
     c.extract_stripped(old_tar, "/work/tree/old")
     c.extract_stripped(new_tar, "/work/tree/new")

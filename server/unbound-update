@@ -406,7 +406,7 @@ def fetch_release(config, version=None, tag=None):
                     raise
                 break
         if not found:
-            raise StepError("download", f"版 {version} のリリースが見つかりません。")
+            raise StepError("download", f"バージョン {version} のリリースが見つかりません。")
         return found
     return fetch_release_at(f"{base_url}/latest/download")
 
@@ -436,7 +436,7 @@ def select_files(config, release):
 
 def gen_dir(version):
     if not GEN_RE.match(version or ""):
-        raise StepError("verify", "版の形式が正しくありません。")
+        raise StepError("verify", "バージョンの形式が正しくありません。")
     return os.path.join(STATE_DIR, "packages", version)
 
 
@@ -474,7 +474,7 @@ def gen_files(version):
     try:
         manifest = json.load(open(os.path.join(target, "manifest.json"), encoding="utf-8"))
     except (OSError, ValueError):
-        raise StepError("install", f"版 {version} のパッケージがこのサーバーに残っていません。")
+        raise StepError("install", f"バージョン {version} のパッケージがこのサーバーに残っていません。")
     return [os.path.join(target, item["file"]) for item in manifest["files"]], manifest
 
 
@@ -513,7 +513,7 @@ def pkg_install(version):
         raise StepError("install", "パッケージを導入できませんでした。\n" + tail(out, err))
     now = installed_version()
     if now != manifest["pkg_version"]:
-        raise StepError("install", f"導入後の版が一致しません（期待 {manifest['pkg_version']}、実際 {now or 'なし'}）。")
+        raise StepError("install", f"導入後のバージョンが一致しません（期待 {manifest['pkg_version']}、実際 {now or 'なし'}）。")
 
 
 def checkconf():
@@ -857,14 +857,14 @@ def cmd_update(args):
         state = load_state()
         current = state.get("current")
         if not current:
-            raise Fatal(f"このサーバーには、まだこの仕組みで導入した版がありません。最初は次を実行してください: {TOOL_NAME} migrate")
+            raise Fatal(f"このサーバーには、まだこの仕組みで導入したバージョンがありません。最初は次を実行してください: {TOOL_NAME} migrate")
         release = fetch_release(config, args.version, args.tag)
         entry, _ = select_files(config, release)
         target = entry["pkg_version"]
         now = installed_version()
         say(f"導入済み: {now or 'なし'} / 対象: {target}（{release['manifest']['tag']}）")
         if now == target and not args.force:
-            say("すでに対象の版です。何も変更していません。")
+            say("すでに対象のバージョンです。何も変更していません。")
             return 0
         version, _ = download_generation(config, release)
         say("パッケージを取得し、SHA-256 を照合しました。")
@@ -881,7 +881,7 @@ def cmd_update(args):
             say(f"失敗しました（{exc.stage}）。\n{exc.detail}")
             ok, why = rollback_to(current, backup, stable)
             if ok:
-                say(f"元の版 {current} へ切り戻しました。")
+                say(f"元のバージョン {current} へ切り戻しました。")
                 return 1
             say(f"切り戻しにも失敗しました。至急、状態を確かめてください。\n{why}")
             return 3
@@ -1043,7 +1043,7 @@ def cmd_rollback(args):
         state = load_state()
         previous = state.get("previous")
         if not previous:
-            raise Fatal("切り戻し先の版が、このサーバーに残っていません。")
+            raise Fatal("切り戻し先のバージョンが、このサーバーに残っていません。")
         current = state.get("current")
         try:
             pkg_install(previous)
@@ -1135,14 +1135,14 @@ def cmd_init(args):
 def make_parser():
     parser = argparse.ArgumentParser(prog=TOOL_NAME, description="Unbound のパッケージを取得し、照合して入れ替えます。")
     sub = parser.add_subparsers(dest="command", metavar="コマンド")
-    item = sub.add_parser("update", help="公開されている版へ入れ替える（既定は最新）")
-    item.add_argument("--version", help="上流の版（例 1.26.2）")
+    item = sub.add_parser("update", help="公開されているバージョンへ入れ替える（既定は最新）")
+    item.add_argument("--version", help="上流のバージョン（例 1.26.2）")
     item.add_argument("--tag", help="リリースのタグ（例 v1.26.2-1）")
-    item.add_argument("--force", action="store_true", help="同じ版でも入れ直す")
+    item.add_argument("--force", action="store_true", help="同じバージョンでも入れ直す")
     item.set_defaults(func=cmd_update)
-    sub.add_parser("check", help="導入済みの版と、公開されている最新版を表示する").set_defaults(func=cmd_check)
+    sub.add_parser("check", help="導入済みのバージョンと、公開されている最新バージョンを表示する").set_defaults(func=cmd_check)
     sub.add_parser("verify", help="状態と名前解決を確かめる").set_defaults(func=cmd_verify)
-    sub.add_parser("rollback", help="直前の版へ戻す（設定は変えない）").set_defaults(func=cmd_rollback)
+    sub.add_parser("rollback", help="直前のバージョンへ戻す（設定は変えない）").set_defaults(func=cmd_rollback)
     item = sub.add_parser("save", help="現在の設定を 1 ファイルに保存する（旧サーバーで使う）")
     item.add_argument("--output", required=True)
     item.add_argument("--config-dir", default="")

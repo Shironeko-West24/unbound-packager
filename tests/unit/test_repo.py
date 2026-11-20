@@ -50,7 +50,7 @@ class WorkflowTest(unittest.TestCase):
         steps = {step.splitlines()[0]: step for step in self.text("ci.yml").split("      - name: ")[1:]}
         self.assertNotIn("if:", steps["自動テスト"])
         self.assertNotIn("if:", steps["変更の確認"])
-        for name in ("上流の最新版の確認", "ビルドとテスト"):
+        for name in ("上流の最新バージョンの確認", "ビルドとテスト"):
             self.assertIn("if: steps.changes.outputs.build == 'true'", steps[name], name)
         self.assertNotIn("paths-ignore", self.text("ci.yml"))
         self.assertNotIn("paths:", self.text("ci.yml"))

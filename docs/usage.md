@@ -125,6 +125,6 @@ sudo unbound-update update --version 1.26.2
 | `ssh-keygen がないため、リリースの署名を確かめられません` | openssh-clients（Rocky Linux）または openssh-client（Ubuntu）を導入します |
 | `SHA-256 が一致しません` | 取得したファイルが `SHA256SUMS` と違います。導入しません。時間をおいてやり直し、続くならリリースを確かめてください |
 | `取得できませんでした` | GitHub へ接続できません。サーバーから `curl -I https://github.com` で確かめます |
-| `まだこの仕組みで導入した版がありません` | 最初は `update` ではなく `migrate` を実行します |
+| `まだこの仕組みで導入したバージョンがありません` | 最初は `update` ではなく `migrate` を実行します |
 | `依存関係を解決できません` | OS が古い可能性があります。`dnf update` や `apt upgrade` のあとでやり直します |
 | `対応していない OS です` | Rocky Linux 10 と Ubuntu 26.04 だけに対応しています |
