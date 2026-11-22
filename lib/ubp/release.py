@@ -47,7 +47,7 @@ def assemble(code, work, version, revision):
         if not os.path.exists(report_path) or not json.load(open(report_path, encoding="utf-8")).get("ok"):
             raise UbpError(f"{os_name} のテストに合格していないため、公開できません。")
         if manifest.get("upstream") != version:
-            raise UbpError(f"{os_name} の成果物の版が一致しません。")
+            raise UbpError(f"{os_name} の成果物のバージョンが一致しません。")
         for item in manifest["files"] + manifest.get("sources", []):
             path = os.path.join(source, item["file"])
             if sha256_file(path) != item["sha256"]:

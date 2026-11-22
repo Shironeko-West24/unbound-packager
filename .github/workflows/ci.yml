@@ -39,7 +39,7 @@ jobs:
           UBP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 -I tools/ci.py changes
 
-      - name: 上流の最新版の確認
+      - name: 上流の最新バージョンの確認
         id: latest
         if: steps.changes.outputs.build == 'true'
         run: python3 -I tools/ci.py latest

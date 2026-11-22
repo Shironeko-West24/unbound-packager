@@ -26,7 +26,7 @@ def detect_latest(fetcher=fetch):
     html = fetcher(BASE_URL).decode("utf-8", "replace")
     found = versions.versions_in_index(html)
     if not found:
-        raise UbpError("上流の配布ページから版番号を読み取れませんでした。")
+        raise UbpError("上流の配布ページからバージョン番号を読み取れませんでした。")
     return versions.latest(found)
 
 

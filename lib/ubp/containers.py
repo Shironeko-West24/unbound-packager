@@ -54,7 +54,7 @@ def build_packages(code, work, os_name, version, revision, source, jobs=0):
     image = build_image(code, f"build-{os_name}")
     name = f"ubp-build-{os_name}"
     remove(name)
-    log(f"{os_name} 向けのビルドを始めます（版 {version}、リビジョン {revision}）。")
+    log(f"{os_name} 向けのビルドを始めます（バージョン {version}、リビジョン {revision}）。")
     rc = run_stream(engine() + [
         "run", "--rm", "--name", name, "-v", f"{job}:/work:Z", image,
         "python3", "-I", f"/work/src/packaging/{SCRIPTS[os_name]}",
