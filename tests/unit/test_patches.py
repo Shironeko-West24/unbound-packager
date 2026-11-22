@@ -54,11 +54,11 @@ class PatchDecisionTest(unittest.TestCase):
         changed = OLD["a.c"].replace("five", "FIVE")
         decision = self.decide({"a.c": changed}, {"a.c": changed})
         self.assertEqual(decision.action, "drop")
-        self.assertIn("逆向き", decision.reason)
+        self.assertIn("ソースにパッチの変更があることを確認", decision.reason)
 
     def test_drop_by_policy(self):
         decision = self.decide({}, {"a.c": OLD["a.c"].replace("five", "FIVE")}, name="unbound-system-tls.patch")
-        self.assertEqual((decision.action, "統一方針で採用しない" in decision.reason), ("drop", True))
+        self.assertEqual((decision.action, "このビルドでは適用しない種類のパッチ" in decision.reason), ("drop", True))
 
     def test_drop_when_cve_in_changelog(self):
         decision = self.decide(
@@ -136,7 +136,7 @@ class PatchDecisionTest(unittest.TestCase):
         added = {"testdata/t.rpl": "one\ntwo\n"}
         decision = self.decide(added, added)
         self.assertEqual(decision.action, "drop")
-        self.assertIn("逆向き", decision.reason)
+        self.assertIn("ソースにパッチの変更があることを確認", decision.reason)
 
     def test_unapplied_patch_is_not_taken_as_reversed(self):
         path = os.path.join(self.tmp, "y.patch")

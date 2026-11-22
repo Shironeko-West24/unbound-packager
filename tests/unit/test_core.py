@@ -197,9 +197,10 @@ class ReleaseTest(unittest.TestCase):
             helpers.make_out(self.tmp, "1.26.2", 1, os_name)
         target, combined = release.assemble(helpers.ROOT, self.tmp, "1.26.2", 1)
         text = release.notes(combined, "o/r")
-        for needed in ("非公式ビルド", "NOTICE.md", "ソースパッケージ", "| `a.patch` | 除外 | 上流に取り込み済み |", "/usr/share/new", "sudo unbound-update update --version 1.26.2"):
+        for needed in ("非公式ビルド", "NOTICE.md", "ソースパッケージ", "| `a.patch` | × | 上流に取り込み済み |", "| Rocky Linux 10 |", "1 件中 0 件を適用", "## OS のパッチ", "/usr/share/new", "sudo unbound-update update --version 1.26.2"):
             self.assertIn(needed, text)
         self.assertNotIn("drop", text)
+        self.assertTrue(text.startswith("Unbound 1.26.2 の非公式ビルドです。\n"))
         calls = []
         with self.assertRaises(UbpError) as caught:
             release.publish(target, combined, "o/r", "abc123", gh=lambda cmd, **kw: calls.append(cmd))
@@ -210,6 +211,7 @@ class ReleaseTest(unittest.TestCase):
         cmd = calls[0]
         self.assertEqual(cmd[:4], ["gh", "release", "create", "v1.26.2-1"])
         self.assertIn("abc123", cmd)
+        self.assertEqual(cmd[cmd.index("--title") + 1], "Unbound 1.26.2 (build 1)")
         self.assertTrue(any(arg.endswith("SHA256SUMS") for arg in cmd))
         self.assertTrue(any(arg.endswith("SHA256SUMS.sig") for arg in cmd))
         self.assertEqual(len(calls), 1)
