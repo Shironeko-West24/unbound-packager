@@ -1,6 +1,6 @@
 # unbound-packager：Claude Code の作業規則
 
-DNS リゾルバ（Unbound）の rpm と deb を、上流の最新版から GitHub Actions で作って公開するリポジトリです。Claude Code でこのリポジトリを変更するときは、この規則に従います。
+DNS リゾルバ（Unbound）の rpm と deb を、上流の最新バージョンから GitHub Actions で作って公開するリポジトリです。Claude Code でこのリポジトリを変更するときは、この規則に従います。
 
 ## 進め方
 
